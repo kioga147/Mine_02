@@ -1,0 +1,90 @@
+{
+    "BaseDir":"./",
+    "ShowWarnFlag":          1,
+    "ShareSymbolsFlag":      1,
+    "ReferMatchPathFlag":    0,
+    "GvalTipFlag":           1,
+    "IgnoreFileNameVarFlag": 1,
+    "ProjectFiles":[
+    ],
+    "IgnoreModules":["hive", "import",
+        "TssManager", "GameFrontendHUD", "Vector", "Rotator", "bp_lobby", "Vector2D", "bp_global", "bp_authorization", "LobbyENV",
+        "InGameUIManager", "DSHUD", "Puffer", "BP_Platform", "LobbyG", "BP_MAP_ClubLogo", "BP_ARRAY_ClubLogo", "Instance",
+        "LinearColor", "LuaDebugHelper", "ScriptHelperServer", "ScriptHelperServer_WorldParallelism", "VSCodeLuaDebug",
+        "UE", "UAEUserWidget", "LogE", "Tss", "ObjectExtend" ,"UE_BUILD_SHIPPING","ImageManipulator","ImageDownloaderV2","ImageDownloaderV3","ImageEx","SlateBrush",
+		"DateTime","Timespan","KeepGameLiveInterface","Dolphin","BP_STRUCT_TeamUpFriendInfo","ComplaintFeedbackSummaryNotice","EncryptPakTest","DoReloadLua","LuaMemoryUI","BP_ARRAY_DynamicLevels","BP_ARRAY_lbsranktypetable",
+		"pakwhitelist","ConfigDownloader","extrapaklistneedmount","BP_ARRAY_Paradise","VideoConfigDownloader","TextBlock"
+    ],
+    "IgnoreFileVars": [
+        {
+            "File": "client_entry.lua",
+            "Vars": ["UE_BUILD_SHIPPING", "Tss"]
+        }
+		,
+        {
+            "File": "util.lua",
+            "Vars": ["newestpakslist"]
+        }
+    ],
+    "IgnoreReadFiles": [
+       
+    ],
+    "IgnoreErrorTypes": [
+        4,6,18
+	],
+	"IgnoreFileOrFloder": [
+		"lobby/on.*lua",
+		"tests/",
+		"robot/",
+        "coverage/"
+	],
+    "IgnoreFileErr": [
+       "lobby/gm1.lua",
+       "common/test.lua",
+	   "Replay/Test.lua",
+	   "test/luaunit.lua",
+	   "improved_ingameui",
+	   "ingame",
+	   "Server",
+	   "vsCodeDebugger",
+	   "delete_lua"
+	],
+    "IgnoreFileErrTypes": [
+        {
+            "File": "gc_control.lua",
+            "Types": [3]
+        },
+        {
+            "File": "sandbox.lua",
+            "Types": [3]
+        }
+    ],
+    "ProtocolVars": [
+       
+        
+	],
+    "AnntotateSets": [
+        {
+            "FuncName": "GetUIObject",
+            "ParamIndex": 2,
+            "SplitFlag": 0,
+            "PrefixStr": "",
+            "SuffixStr": ""
+        },
+        {
+            "FuncName": "KismetLibrary.New",
+            "ParamIndex": 1,
+            "SplitFlag": 1,
+            "PrefixStr": "",
+            "PrefixStrList": ["U", "A", ""],
+            "SuffixStr": ""
+        },
+        {
+            "FuncName": "CreateUIWidget",
+            "ParamIndex": 2,
+            "SplitFlag": 1,
+            "PrefixStr": "",
+            "SuffixStr": ""
+        }
+    ]
+}

@@ -1,0 +1,1 @@
+{"version":"0.2.0","IsUGCAutoGenerate":true,"configurations":[{"type":"emmylua_new","request":"launch","name":"PIE0","host":"0.0.0.0","port":9966,"ideConnectDebugger":true,"stopOnEntry":false,"ext":[".lua",".lua.txt",".lua.bytes"]}]}

@@ -45,8 +45,24 @@ end
 
 ---背包UI打开后执行
 ---@param Panel UUserWidget @背包主界面控件
--- function BP_BackpackUIComponentV2_Custom:OnOpenBattleMainPanel(Panel)
--- end
+function BP_BackpackUIComponentV2_Custom:OnOpenBattleMainPanel(Panel)
+    BP_BackpackUIComponentV2_Custom.SuperClass.OnOpenBattleMainPanel(self, Panel)
+    
+    local Player = self:GetOwner()
+    local backpackWeightInfo = BP_BackpackComponentV2_Custom.GetBackpackWeightInfo(Player)
+    if backpackWeightInfo then
+        local weightText = string.format("%dkg/%dkg", math.floor(backpackWeightInfo.CurrentWeight), backpackWeightInfo.MaxWeight)
+        
+        if Panel and Panel.SetText then
+            Panel:SetText(weightText)
+        elseif Panel and Panel.GetWidgetFromName then
+            local TextWidget = Panel:GetWidgetFromName("WeightText")
+            if TextWidget and TextWidget.SetText then
+                TextWidget:SetText(weightText)
+            end
+        end
+    end
+end
 
 ---背包UI关闭后执行
 ---@param Panel UUserWidget @背包主界面控件

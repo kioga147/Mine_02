@@ -9,7 +9,7 @@ ProjectShortPath=/Mine_02/
 StartMapName=/Mine_02/UGCmap
 MapMode=0
 bIsBigWorld=0
-Version=1.37.10.16422
+Version=1.37.10.16424
 UpdateVersion=10
 GameModePath=/Mine_02/Asset/Blueprint/UGCGameMode.UGCGameMode_C
 

@@ -267,8 +267,14 @@ UGCNativeGameAttributeTypeCommentMap = {
 
 ---@enum UGCCustomGameAttributeType
 UGCCustomGameAttributeType = { 
+	--Basic [镐子等级-AxeLevel],
+	UGCAttributeGroup_Base_AxeLevel = 'AxeLevel',
+	--Basic [矿石等级-MineLevel],
+	UGCAttributeGroup_Base_MineLevel = 'MineLevel',
 }; 
 
 UGCCustomGameAttributeTypeCommentMap = { 
+	['AxeLevel'] = 'Basic [镐子等级-AxeLevel]', 
+	['MineLevel'] = 'Basic [矿石等级-MineLevel]', 
 }; 
 

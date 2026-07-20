@@ -1,4 +1,4 @@
----@class Gif_1_C:BP_UGC_DamagableActor_C
+---@class Stone_C:BP_UGC_DamagableActor_C
 ---@field HittBox UBoxComponent
 ---@field StaticMesh UStaticMeshComponent
 --Edit Below--
@@ -9,10 +9,34 @@ local Stone = {
 }
 
 UGCGameSystem.UGCRequire('Script.GameAttribute.game_attribute_type')
+local MiningSystem = UGCGameSystem.UGCRequire('Script.GamePartCustom.MiningSystem')
 
 function Stone:ReceiveBeginPlay()
     self.ShakeTime = 0
     self.CacheZ = self.StaticMesh:GetRelativeTransform().Translation.Z
+end
+
+---受击前置事件
+---生效范围：服务器
+---@param Damage float 伤害值
+---@param EventInstigator AController 伤害来源的Controller
+---@param DamageCauser AActor 伤害来源
+---@param DamageContext FGameMagnitudeContext 伤害上下文
+---@return boolean @是否允许受击
+function Stone:PreTakeDamageEvent(Damage, EventInstigator, DamageCauser, DamageContext)
+    local mineLevel = UGCAttributeSystem.GetGameAttributeValue(self, "MineLevel")
+    ugcprint("[矿石挖掘] 石头等级:", mineLevel)
+    
+    local axeLevel = MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
+    ugcprint("[矿石挖掘] 镐子等级:", axeLevel)
+    
+    if not MiningSystem.CanMine(mineLevel, axeLevel) then
+        ugcprint("[矿石挖掘] ❌ 镐子等级不足！需要等级", mineLevel, "的镐子，当前镐子等级", axeLevel)
+        return false
+    end
+    
+    ugcprint("[矿石挖掘] ✅ 镐子等级足够，可以挖掘")
+    return true
 end
 
 ---受击后置事件

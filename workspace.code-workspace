@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "..\\..\\Content\\LuaHelper"
+		},
+		{
+			"path": "oasis-skill-plus"
 		}
 	],
 	"settings": ""

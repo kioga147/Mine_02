@@ -16,8 +16,37 @@ MiningSystem.AXE_LEVEL_MAP = {
     [83100023] = 5,
 }
 
+MiningSystem.AXE_LEVEL_BY_CLASS = {
+    ["copper_pickaxe"] = 1,
+    ["copper_drill"] = 1,
+    ["basic_miningvehicle"] = 2,
+    ["iron_pickaxe"] = 2,
+    ["iron_drill"] = 2,
+    ["alloy_pickaxe"] = 3,
+    ["alloy_drill"] = 3,
+    ["diamond_pickaxe"] = 4,
+    ["diamond_drill"] = 4,
+    ["intermediate_miningtruck"] = 4,
+    ["exdiamond_pickaxe"] = 5,
+    ["exdiamond_drill"] = 5,
+    ["advanced_miningtruck"] = 5,
+}
+
 function MiningSystem.GetAxeLevelByItemID(ItemID)
     return MiningSystem.AXE_LEVEL_MAP[ItemID] or 0
+end
+
+function MiningSystem.GetAxeLevelByClassName(ClassName)
+    if not ClassName then
+        return 0
+    end
+    local name = tostring(ClassName):lower()
+    for classPattern, level in pairs(MiningSystem.AXE_LEVEL_BY_CLASS) do
+        if string.find(name, classPattern) then
+            return level
+        end
+    end
+    return 0
 end
 
 function MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
@@ -25,62 +54,84 @@ function MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
         return 0
     end
     
+    local currentWeapon = nil
+    if UGCWeaponManagerSystem.GetCurrentWeapon then
+        currentWeapon = UGCWeaponManagerSystem.GetCurrentWeapon(DamageCauser)
+    end
+    
+    if not currentWeapon and DamageCauser.GetOwner then
+        local owner = DamageCauser:GetOwner()
+        if owner and UGCWeaponManagerSystem.GetCurrentWeapon then
+            currentWeapon = UGCWeaponManagerSystem.GetCurrentWeapon(owner)
+        end
+    end
+    
+    if currentWeapon then
+        local axeLevel = UGCAttributeSystem.GetGameAttributeValue(currentWeapon, "AxeLevel")
+        if axeLevel and axeLevel > 0 then
+            return axeLevel
+        end
+        
+        if currentWeapon.GetClass then
+            local level = MiningSystem.GetAxeLevelByClassName(currentWeapon:GetClass())
+            if level > 0 then
+                return level
+            end
+        end
+        
+        if currentWeapon.GetName then
+            local level = MiningSystem.GetAxeLevelByClassName(currentWeapon:GetName())
+            if level > 0 then
+                return level
+            end
+        end
+        
+        if UGCWeaponManagerSystem.GetWeaponItemID then
+            local itemID = UGCWeaponManagerSystem.GetWeaponItemID(currentWeapon)
+            if itemID then
+                local level = MiningSystem.GetAxeLevelByItemID(itemID)
+                if level > 0 then
+                    return level
+                end
+            end
+        end
+        
+        if currentWeapon.GetItemID then
+            local itemID = currentWeapon:GetItemID()
+            if itemID then
+                local level = MiningSystem.GetAxeLevelByItemID(itemID)
+                if level > 0 then
+                    return level
+                end
+            end
+        end
+    end
+    
+    local axeLevel = UGCAttributeSystem.GetGameAttributeValue(DamageCauser, "AxeLevel")
+    if axeLevel and axeLevel > 0 then
+        return axeLevel
+    end
+    
+    if UGCWeaponManagerSystem.GetWeaponItemID then
+        local itemID = UGCWeaponManagerSystem.GetWeaponItemID(DamageCauser)
+        if itemID then
+            local level = MiningSystem.GetAxeLevelByItemID(itemID)
+            if level > 0 then
+                return level
+            end
+        end
+    end
+    
     if DamageCauser.GetItemID then
         local itemID = DamageCauser:GetItemID()
-        ugcprint("[矿石挖掘] DamageCauser:GetItemID():", itemID)
-        local level = MiningSystem.GetAxeLevelByItemID(itemID)
-        if level > 0 then
-            return level
-        end
-    end
-    
-    if DamageCauser.UGCItemHandle then
-        local itemHandle = DamageCauser.UGCItemHandle
-        if itemHandle then
-            if itemHandle.ItemID then
-                ugcprint("[矿石挖掘] UGCItemHandle.ItemID:", itemHandle.ItemID)
-                local level = MiningSystem.GetAxeLevelByItemID(itemHandle.ItemID)
-                if level > 0 then
-                    return level
-                end
-            end
-            if itemHandle.GetItemID then
-                local itemID = itemHandle:GetItemID()
-                ugcprint("[矿石挖掘] UGCItemHandle:GetItemID():", itemID)
-                local level = MiningSystem.GetAxeLevelByItemID(itemID)
-                if level > 0 then
-                    return level
-                end
+        if itemID then
+            local level = MiningSystem.GetAxeLevelByItemID(itemID)
+            if level > 0 then
+                return level
             end
         end
     end
     
-    if DamageCauser.GetOwner then
-        local owner = DamageCauser:GetOwner()
-        ugcprint("[矿石挖掘] DamageCauser:GetOwner():", tostring(owner))
-        if owner then
-            if owner.GetItemID then
-                local itemID = owner:GetItemID()
-                ugcprint("[矿石挖掘] Owner:GetItemID():", itemID)
-                local level = MiningSystem.GetAxeLevelByItemID(itemID)
-                if level > 0 then
-                    return level
-                end
-            end
-            if owner.UGCItemHandle then
-                local itemHandle = owner.UGCItemHandle
-                if itemHandle and itemHandle.ItemID then
-                    ugcprint("[矿石挖掘] Owner.UGCItemHandle.ItemID:", itemHandle.ItemID)
-                    local level = MiningSystem.GetAxeLevelByItemID(itemHandle.ItemID)
-                    if level > 0 then
-                        return level
-                    end
-                end
-            end
-        end
-    end
-    
-    ugcprint("[矿石挖掘] 无法从DamageCauser获取物品ID")
     return 0
 end
 

@@ -267,14 +267,23 @@ UGCNativeGameAttributeTypeCommentMap = {
 
 ---@enum UGCCustomGameAttributeType
 UGCCustomGameAttributeType = { 
-	--Basic [镐子等级-AxeLevel],
-	UGCAttributeGroup_Base_AxeLevel = 'AxeLevel',
 	--Basic [矿石等级-MineLevel],
 	UGCAttributeGroup_Base_MineLevel = 'MineLevel',
+	--Basic [售价-Price],
+	UGCAttributeGroup_Base_Price = 'Price',
+
+---------------------------------------------------------
+
+	--Weapon [镐子等级-AxeLevel],
+	UGCAttributeGroup_Weapon_AxeLevel = 'AxeLevel',
 }; 
 
 UGCCustomGameAttributeTypeCommentMap = { 
-	['AxeLevel'] = 'Basic [镐子等级-AxeLevel]', 
 	['MineLevel'] = 'Basic [矿石等级-MineLevel]', 
+	['Price'] = 'Basic [售价-Price]', 
+
+---------------------------------------------------------
+
+	['AxeLevel'] = 'Weapon [镐子等级-AxeLevel]', 
 }; 
 

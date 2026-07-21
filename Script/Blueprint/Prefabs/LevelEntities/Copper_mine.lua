@@ -16,27 +16,22 @@ function Copper_mine:ReceiveBeginPlay()
     self.CacheZ = self.StaticMesh:GetRelativeTransform().Translation.Z
 end
 
----受击前置事件
----生效范围：服务器
----@param Damage float 伤害值
----@param EventInstigator AController 伤害来源的Controller
----@param DamageCauser AActor 伤害来源
----@param DamageContext FGameMagnitudeContext 伤害上下文
----@return boolean @是否允许受击
-function Copper_mine:PreTakeDamageEvent(Damage, EventInstigator, DamageCauser, DamageContext)
+function Copper_mine:PreOverrideDamage(Damage, EventInstigator, DamageCauser, DamageContext)
     local mineLevel = UGCAttributeSystem.GetGameAttributeValue(self, "MineLevel")
-    ugcprint("[矿石挖掘] 铜矿等级:", mineLevel)
-    
-    local axeLevel = MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
-    ugcprint("[矿石挖掘] 镐子等级:", axeLevel)
-    
-    if not MiningSystem.CanMine(mineLevel, axeLevel) then
-        ugcprint("[矿石挖掘] ❌ 镐子等级不足！需要等级", mineLevel, "的镐子，当前镐子等级", axeLevel)
-        return false
+    ugcprint("[矿石等级检查] 受害者MineLevel:", mineLevel)
+    if not mineLevel or mineLevel <= 0 then
+        return Damage
     end
     
-    ugcprint("[矿石挖掘] ✅ 镐子等级足够，可以挖掘")
-    return true
+    local axeLevel = MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
+    ugcprint("[矿石等级检查] 攻击者AxeLevel:", axeLevel)
+    
+    if axeLevel > 0 and axeLevel < mineLevel then
+        ugcprint("[矿石等级检查] 等级不足！伤害设为0 (AxeLevel="..axeLevel..", MineLevel="..mineLevel..")")
+        return 0
+    end
+    
+    return Damage
 end
 
 ---受击后置事件

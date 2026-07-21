@@ -3,34 +3,21 @@
 --Edit Below--
 local Copper_pickaxe = {}
  
---[[
 function Copper_pickaxe:ReceiveBeginPlay()
     Copper_pickaxe.SuperClass.ReceiveBeginPlay(self)
+    UGCAttributeSystem.SetGameAttributeValue(self, "AxeLevel", 1)
 end
---]]
 
---[[
-function Copper_pickaxe:ReceiveTick(DeltaTime)
-    Copper_pickaxe.SuperClass.ReceiveTick(self, DeltaTime)
-end
---]]
-
---[[
 function Copper_pickaxe:ReceiveEndPlay()
     Copper_pickaxe.SuperClass.ReceiveEndPlay(self) 
 end
---]]
 
---[[
 function Copper_pickaxe:GetReplicatedProperties()
     return
 end
---]]
 
---[[
 function Copper_pickaxe:GetAvailableServerRPCs()
     return
 end
---]]
 
 return Copper_pickaxe

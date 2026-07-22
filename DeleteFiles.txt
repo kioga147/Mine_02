@@ -1,0 +1,2 @@
+Mine_02/Asset/Blueprint/Prefabs/Items/Mine/Mine_1.uasset
+Mine_02/Script/Blueprint/Prefabs/Items/Mine/Mine_1.lua

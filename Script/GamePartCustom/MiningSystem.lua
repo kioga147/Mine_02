@@ -1,7 +1,7 @@
 local MiningSystem = {}
 
 MiningSystem.AXE_LEVEL_MAP = {
-    [83100026] = 1,
+    [8310026] = 1,
     [83100027] = 1,
     [83100030] = 2,
     [83100019] = 2,

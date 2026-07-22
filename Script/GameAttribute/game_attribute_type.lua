@@ -271,19 +271,13 @@ UGCCustomGameAttributeType = {
 	UGCAttributeGroup_Base_MineLevel = 'MineLevel',
 	--Basic [售价-Price],
 	UGCAttributeGroup_Base_Price = 'Price',
-
----------------------------------------------------------
-
-	--Weapon [镐子等级-AxeLevel],
-	UGCAttributeGroup_Weapon_AxeLevel = 'AxeLevel',
+	--Basic [镐子等级-AxeLevel],
+	UGCAttributeGroup_Base_AxeLevel = 'AxeLevel',
 }; 
 
 UGCCustomGameAttributeTypeCommentMap = { 
 	['MineLevel'] = 'Basic [矿石等级-MineLevel]', 
 	['Price'] = 'Basic [售价-Price]', 
-
----------------------------------------------------------
-
-	['AxeLevel'] = 'Weapon [镐子等级-AxeLevel]', 
+	['AxeLevel'] = 'Basic [镐子等级-AxeLevel]', 
 }; 
 

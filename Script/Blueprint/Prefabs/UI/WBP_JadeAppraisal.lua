@@ -1,3 +1,4 @@
+-- Synced from TESTWK for 1:1 UI (Mine_02)
 ---@class WBP_JadeAppraisal_C:UAEUserWidget
 ---@field Btn_Close UButton
 ---@field Btn_ConfirmNo UButton
@@ -112,14 +113,6 @@ local function GetW(self, Name)
         return self:GetWidgetFromName(Name)
     end
     return nil
-end
--- Mine_02 控件树中 SizeBox 名为 Cell_N_Wrapper（对齐 TESTWK 的 CellBox_N）
-local function GetCellBox(self, Index)
-    local Box = GetW(self, "CellBox_" .. tostring(Index))
-    if Box then
-        return Box
-    end
-    return GetW(self, "Cell_" .. tostring(Index) .. "_Wrapper")
 end
 local function MakeColor(C)
     if not C then
@@ -716,7 +709,7 @@ function WBP_JadeAppraisal:ApplyScreenLayout()
     for Row = 0, 4 do
         for Col = 0, 4 do
             local Idx = Row * 5 + Col
-            SetSizeBoxWH(GetCellBox(self, Idx), Cell, Cell)
+            SetSizeBoxWH(GetW(self, "CellBox_" .. tostring(Idx)), Cell, Cell)
             if Col < 4 then
                 SetSizeBoxWH(GetW(self, string.format("GapH_%d_%d", Row, Col)), Gap, Cell)
             end
@@ -911,7 +904,7 @@ end
 function WBP_JadeAppraisal:ApplyCellIdleStyle(Index)
     local Btn = GetW(self, "Cell_" .. tostring(Index))
     local Txt = GetW(self, "Txt_Cell_" .. tostring(Index))
-    local Box = GetCellBox(self, Index)
+    local Box = GetW(self, "CellBox_" .. tostring(Index))
     SetButtonBg(Btn, COLOR.CellIdleBg)
     SetTextColor(Txt, COLOR.CellIdleTxt)
     SetOpacity(Btn, 1)
@@ -920,7 +913,7 @@ end
 function WBP_JadeAppraisal:ApplyCellHoverStyle(Index)
     local Btn = GetW(self, "Cell_" .. tostring(Index))
     local Txt = GetW(self, "Txt_Cell_" .. tostring(Index))
-    local Box = GetCellBox(self, Index)
+    local Box = GetW(self, "CellBox_" .. tostring(Index))
     SetButtonBg(Btn, COLOR.CellHoverBg)
     SetTextColor(Txt, COLOR.CellHoverTxt)
     -- 对齐 Preview: translateY(-2px) 近似为轻微放大
@@ -929,7 +922,7 @@ end
 function WBP_JadeAppraisal:ApplyCellSelectedStyle(Index)
     local Btn = GetW(self, "Cell_" .. tostring(Index))
     local Txt = GetW(self, "Txt_Cell_" .. tostring(Index))
-    local Box = GetCellBox(self, Index)
+    local Box = GetW(self, "CellBox_" .. tostring(Index))
     SetButtonBg(Btn, COLOR.CellSelectedBg)
     SetTextColor(Txt, COLOR.CellSelectedTxt)
     SetOpacity(Btn, 1)
@@ -942,7 +935,7 @@ function WBP_JadeAppraisal:ApplyCellLevelStyle(Index, Level)
     end
     local Btn = GetW(self, "Cell_" .. tostring(Index))
     local Txt = GetW(self, "Txt_Cell_" .. tostring(Index))
-    local Box = GetCellBox(self, Index)
+    local Box = GetW(self, "CellBox_" .. tostring(Index))
     SetButtonBg(Btn, Style.Bg)
     SetTextColor(Txt, Style.Txt)
     SetOpacity(Btn, 1)
@@ -951,7 +944,7 @@ end
 function WBP_JadeAppraisal:PlayRevealFx(Index, Level)
     local Btn = GetW(self, "Cell_" .. tostring(Index))
     local Txt = GetW(self, "Txt_Cell_" .. tostring(Index))
-    local Box = GetCellBox(self, Index)
+    local Box = GetW(self, "CellBox_" .. tostring(Index))
     local Target = Box or Btn
     local TimerA = "JadeRevealA_" .. tostring(Index)
     local TimerB = "JadeRevealB_" .. tostring(Index)

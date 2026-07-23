@@ -24,14 +24,13 @@ do
                 [3] = { Name = "黄铜矿脉" },
                 [4] = { Name = "深层矿区" },
                 [5] = { Name = "宝石矿区" },
-                [6] = { Name = "玉石矿脉" },
             },
             GetZone = function(ZoneId)
                 return MineTeleportConfig.Zones[tonumber(ZoneId) or 0]
             end,
             NextZoneId = function(CurrentId)
                 local Id = (tonumber(CurrentId) or 1) + 1
-                if Id > 6 then
+                if Id > 5 then
                     Id = 1
                 end
                 return Id

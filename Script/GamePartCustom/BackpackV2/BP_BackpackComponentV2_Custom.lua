@@ -117,8 +117,32 @@ function BP_BackpackComponentV2_Custom.GetBackpackWeightInfo(Player)
 end
 
 ---func 背包初始化函数，玩家登录后执行一次(服务端调用)
--- function BP_BackpackComponentV2_Custom:InitEventAfterPlayerEnter()
--- end
+function BP_BackpackComponentV2_Custom:InitEventAfterPlayerEnter()
+    if BP_BackpackComponentV2_Custom.SuperClass.InitEventAfterPlayerEnter then
+        pcall(function()
+            BP_BackpackComponentV2_Custom.SuperClass.InitEventAfterPlayerEnter(self)
+        end)
+    end
+    -- 玩家仓库：初始自动解锁 50 格（对齐策划）
+    local Initial = 50
+    local OkCfg, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire("Script.Common.WarehouseConfig")
+    end)
+    if OkCfg and type(Mod) == "table" and Mod.GetInitialSlots then
+        Initial = Mod.GetInitialSlots()
+    end
+    local Player = self:GetOwner()
+    if Player == nil or not UGCBackpackSystemV2 or not UGCBackpackSystemV2.GetWarehouseCellCapacity then
+        return
+    end
+    local Cap = math.floor(tonumber(UGCBackpackSystemV2.GetWarehouseCellCapacity(Player)) or 0)
+    if Cap >= Initial then
+        return
+    end
+    local Need = Initial - Cap
+    local Ok = pcall(UGCBackpackSystemV2.AddWarehouseCellCapacity, Player, Need)
+    ugcprint("[仓库] InitEvent 初始容量", Cap, "->", Cap + Need, "ok=", Ok)
+end
 
 ---func 能否添加物品进背包(服务端调用)
 ---@param ItemID number 物品ID

@@ -22,6 +22,8 @@ local AXE_LEVEL_BY_CLASS = {
     ["advanced_miningtruck"] = 5,
 }
 
+local MINE_CAR_SPEED_SCALE = 4.0
+
 local function GetAxeLevelByClassName(ClassName)
     if not ClassName then
         return 0
@@ -43,17 +45,46 @@ function UGCPlayerPawn:ReceiveBeginPlay()
     
     UGCAttributeSystem.SetGameAttributeValue(self, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, NORMAL_SPEED_SCALE)
     UGCAttributeSystem.SetGameAttributeValue(self, "AxeLevel", 0)
+    
+    self.bIsMineCarMode = false
+end
+
+function UGCPlayerPawn:SetMineCarMode(bEnable)
+    self.bIsMineCarMode = bEnable
+    ugcprint("[矿车模式] 设置矿车模式:", bEnable)
+    
+    if bEnable then
+        UGCAttributeSystem.SetGameAttributeValue(self, 
+            UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, MINE_CAR_SPEED_SCALE)
+        ugcprint("[矿车模式] ✅ 已切换到矿车模式，移速:", MINE_CAR_SPEED_SCALE)
+    else
+        local backpackWeightInfo = BP_BackpackComponentV2_Custom.GetBackpackWeightInfo(self)
+        if backpackWeightInfo and backpackWeightInfo.CurrentWeight >= HEAVY_WEIGHT_THRESHOLD then
+            UGCAttributeSystem.SetGameAttributeValue(self, 
+                UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, HEAVY_SPEED_SCALE)
+        else
+            UGCAttributeSystem.SetGameAttributeValue(self, 
+                UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, NORMAL_SPEED_SCALE)
+        end
+        ugcprint("[矿车模式] ❌ 已退出矿车模式")
+    end
+end
+
+function UGCPlayerPawn:IsMineCarMode()
+    return self.bIsMineCarMode == true
 end
 
 function UGCPlayerPawn:ReceiveTick(DeltaTime)
     UGCPlayerPawn.SuperClass.ReceiveTick(self, DeltaTime)
     
-    local backpackWeightInfo = BP_BackpackComponentV2_Custom.GetBackpackWeightInfo(self)
-    if backpackWeightInfo then
-        if backpackWeightInfo.CurrentWeight >= HEAVY_WEIGHT_THRESHOLD then
-            UGCAttributeSystem.SetGameAttributeValue(self, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, HEAVY_SPEED_SCALE)
-        else
-            UGCAttributeSystem.SetGameAttributeValue(self, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, NORMAL_SPEED_SCALE)
+    if not self.bIsMineCarMode then
+        local backpackWeightInfo = BP_BackpackComponentV2_Custom.GetBackpackWeightInfo(self)
+        if backpackWeightInfo then
+            if backpackWeightInfo.CurrentWeight >= HEAVY_WEIGHT_THRESHOLD then
+                UGCAttributeSystem.SetGameAttributeValue(self, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, HEAVY_SPEED_SCALE)
+            else
+                UGCAttributeSystem.SetGameAttributeValue(self, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, NORMAL_SPEED_SCALE)
+            end
         end
     end
     

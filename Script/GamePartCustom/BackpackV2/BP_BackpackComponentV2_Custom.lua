@@ -116,106 +116,32 @@ function BP_BackpackComponentV2_Custom.GetBackpackWeightInfo(Player)
     }
 end
 
-local COPPER_PICKAXE_ITEM_ID = 8310026
-local MELEE_WEAPON_SLOT = 4
-
 ---func 背包初始化函数，玩家登录后执行一次(服务端调用)
 function BP_BackpackComponentV2_Custom:InitEventAfterPlayerEnter()
-    local PlayerController = self:GetOwner()
-    ugcprint("[背包初始化] ====== 开始发放初始装备 ======")
-    ugcprint("[背包初始化] PlayerController:", tostring(PlayerController))
-    
-    local Player = UGCGameSystem.GetPlayerPawnByPlayerController(PlayerController)
-    ugcprint("[背包初始化] PlayerPawn:", tostring(Player))
-    
-    if not Player then
-        ugcprint("[背包初始化] ❌ 无法获取PlayerPawn，尝试直接使用PlayerController...")
-        Player = PlayerController
+    if BP_BackpackComponentV2_Custom.SuperClass.InitEventAfterPlayerEnter then
+        pcall(function()
+            BP_BackpackComponentV2_Custom.SuperClass.InitEventAfterPlayerEnter(self)
+        end)
     end
-    
-    local currentCount = UGCBackpackSystemV2.GetItemCountV2(Player, COPPER_PICKAXE_ITEM_ID)
-    ugcprint("[背包初始化] 当前铜镐数量:", currentCount)
-    
-    if currentCount <= 0 then
-        ugcprint("[背包初始化] 调用 AddItemV2(Player, 8310026, 1)...")
-        local result = {UGCBackpackSystemV2.AddItemV2(Player, COPPER_PICKAXE_ITEM_ID, 1)}
-        ugcprint("[背包初始化] AddItemV2返回值:", #result > 0 and table.concat(result, ", ") or "nil")
-        
-        local newCount = UGCBackpackSystemV2.GetItemCountV2(Player, COPPER_PICKAXE_ITEM_ID)
-        ugcprint("[背包初始化] 添加后铜镐数量:", newCount)
-        
-        if newCount > 0 then
-            ugcprint("[背包初始化] ✅ 已发放铜镐到背包")
-        else
-            ugcprint("[背包初始化] ❌ 添加铜镐失败")
-        end
-    else
-        ugcprint("[背包初始化] 铜镐已存在，无需发放")
+    -- 玩家仓库：初始自动解锁 50 格（对齐策划）
+    local Initial = 50
+    local OkCfg, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire("Script.Common.WarehouseConfig")
+    end)
+    if OkCfg and type(Mod) == "table" and Mod.GetInitialSlots then
+        Initial = Mod.GetInitialSlots()
     end
-    
-    local selfRef = self
-    UGCTimerManagerSystem.SetTimer(function()
-        selfRef:TryEquipAndHoldCopperPickaxe(Player)
-    end, 5.0, false)
-    
-    ugcprint("[背包初始化] ====== 发放流程启动 ======")
-end
-
-function BP_BackpackComponentV2_Custom:TryEquipAndHoldCopperPickaxe(Player)
-    ugcprint("[初始装备] ====== 开始装备流程 ======")
-    
-    local defineIDs = UGCBackpackSystemV2.GetItemDefineIDsByIDV2(Player, COPPER_PICKAXE_ITEM_ID)
-    ugcprint("[初始装备] 获取到的物品实例:", defineIDs, "数量:", defineIDs and #defineIDs or 0)
-    
-    if defineIDs and #defineIDs > 0 then
-        local firstDefineID = defineIDs[1]
-        ugcprint("[初始装备] 准备装备的物品实例ID:", tostring(firstDefineID))
-        
-        ugcprint("[初始装备] 检查能否装备到近战槽位...")
-        local canEquip = UGCBackpackSystemV2.ItemCanEquipToSlot(Player, COPPER_PICKAXE_ITEM_ID, "EquipmentSlot.Core.MeleeSlot")
-        ugcprint("[初始装备] ItemCanEquipToSlot(近战槽位):", canEquip)
-        
-        local meleeSlotEquipped = UGCBackpackSystemV2.GetEquippedItemBySlotName(Player, "EquipmentSlot.Core.MeleeSlot")
-        ugcprint("[初始装备] 当前近战槽位装备:", tostring(meleeSlotEquipped))
-        
-        UGCBackpackSystemV2.EquipItemV2(Player, "EquipmentSlot.Core.MeleeSlot", firstDefineID)
-        ugcprint("[初始装备] 已调用 EquipItemV2 装备到近战槽位")
-        
-        UGCTimerManagerSystem.SetTimer(function()
-            local nowEquipped = UGCBackpackSystemV2.GetEquippedItemBySlotName(Player, "EquipmentSlot.Core.MeleeSlot")
-            ugcprint("[初始装备] 装备后近战槽位物品:", tostring(nowEquipped))
-            
-            if UGCWeaponManagerSystem.GetCurrentWeapon then
-                local currentWeapon = UGCWeaponManagerSystem.GetCurrentWeapon(Player)
-                ugcprint("[初始装备] 当前手持武器:", tostring(currentWeapon))
-            end
-            
-            if UGCWeaponManagerSystem.SwitchWeaponBySlot then
-                ugcprint("[初始装备] 调用 SwitchWeaponBySlot(4) 切换到近战武器")
-                UGCWeaponManagerSystem.SwitchWeaponBySlot(Player, MELEE_WEAPON_SLOT, true)
-                
-                UGCTimerManagerSystem.SetTimer(function()
-                    if UGCWeaponManagerSystem.GetCurrentWeapon then
-                        local finalWeapon = UGCWeaponManagerSystem.GetCurrentWeapon(Player)
-                        ugcprint("[初始装备] 切换后当前手持武器:", tostring(finalWeapon))
-                        if finalWeapon then
-                            if finalWeapon.GetName then
-                                ugcprint("[初始装备] ✅ 成功！当前武器名称:", tostring(finalWeapon:GetName()))
-                            end
-                        else
-                            ugcprint("[初始装备] ❌ 切换武器后仍未手持任何武器")
-                        end
-                    end
-                end, 0.5, false)
-            else
-                ugcprint("[初始装备] ❌ SwitchWeaponBySlot API不存在")
-            end
-        end, 1.0, false)
-    else
-        ugcprint("[初始装备] ❌ 背包中没有铜镐")
+    local Player = self:GetOwner()
+    if Player == nil or not UGCBackpackSystemV2 or not UGCBackpackSystemV2.GetWarehouseCellCapacity then
+        return
     end
-    
-    ugcprint("[初始装备] ====== 装备流程结束 ======")
+    local Cap = math.floor(tonumber(UGCBackpackSystemV2.GetWarehouseCellCapacity(Player)) or 0)
+    if Cap >= Initial then
+        return
+    end
+    local Need = Initial - Cap
+    local Ok = pcall(UGCBackpackSystemV2.AddWarehouseCellCapacity, Player, Need)
+    ugcprint("[仓库] InitEvent 初始容量", Cap, "->", Cap + Need, "ok=", Ok)
 end
 
 ---func 能否添加物品进背包(服务端调用)
@@ -230,22 +156,12 @@ function BP_BackpackComponentV2_Custom:CanAddItemV2(ItemID, Count)
     local remainingWeight = GetRemainingWeight(Player)
     ugcprint("[背包负重] 剩余负重:", remainingWeight, "kg")
     
-    if remainingWeight <= 0 then
-        ugcprint("[背包负重] ⚠️ 剩余负重为0或负数，返回默认允许数量")
-        return Count
-    end
-    
     local itemWeight = 1
     local itemHandle = UGCItemSystemV2.GetConfigItemHandle(ItemID)
     if itemHandle and itemHandle.UnitWeightConfig then
         itemWeight = itemHandle.UnitWeightConfig
     end
     ugcprint("[背包负重] 物品单重:", itemWeight, "kg")
-    
-    if itemWeight <= 0 then
-        ugcprint("[背包负重] ⚠️ 物品重量为0或负数，返回默认允许数量")
-        return Count
-    end
     
     local maxCount = math.floor(remainingWeight / itemWeight)
     local result = math.min(Count, maxCount)

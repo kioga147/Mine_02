@@ -227,6 +227,10 @@ function BP_BackpackComponentV2_Custom:OnAddItemV2(DefineID, Count)
     ugcprint("[背包负重] =======================")
     
     CheckAutoUpgrade(Player)
+    
+    if Player and Player.UpdateSpeedByWeight then
+        Player:UpdateSpeedByWeight()
+    end
 end
 
 ---func 能否合并物品(新添加物品能否与已有格子物品堆叠, 格子物品即物品实例)(服务端调用)
@@ -289,6 +293,10 @@ function BP_BackpackComponentV2_Custom:OnRemoveItemV2(ItemDefineID, Count)
     end
     
     ugcprint("[背包负重] =======================")
+    
+    if Player and Player.UpdateSpeedByWeight then
+        Player:UpdateSpeedByWeight()
+    end
 end
 
 ---func 能否丢弃物品(服务端调用)
@@ -318,6 +326,10 @@ function BP_BackpackComponentV2_Custom:OnDropItemV2(ItemDefineID, Count)
     end
     
     ugcprint("[背包负重] =======================")
+    
+    if Player and Player.UpdateSpeedByWeight then
+        Player:UpdateSpeedByWeight()
+    end
 end
 
 ---func 能否使用物品(服务端调用)

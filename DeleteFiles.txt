@@ -1,2 +1,1 @@
-Mine_02/Script/Blueprint/Prefabs/Skills/Basic_MiningVehicle.lua
-Mine_02/Asset/Blueprint/Prefabs/Skills/Basic_MiningVehicle.uasset
+Mine_02/others/╧Ω╧╕▓▀╗«.md

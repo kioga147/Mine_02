@@ -124,6 +124,83 @@ do
     end
 end
 
+local TalentMarketConfig = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire("Script.Common.TalentMarketConfig")
+    end)
+    if Ok and type(Mod) == "table" then
+        TalentMarketConfig = Mod
+    else
+        TalentMarketConfig = {
+            UnlockCost = 5000,
+            GoldItemId = 8310002,
+            WorkerOrder = { 1, 2, 3 },
+            Workers = {
+                [1] = { Name = "低级工人", HireCost = 1000, DurationSec = 1800, RewardCount = 50, MinMineLevel = 1, MaxMineLevel = 3 },
+                [2] = { Name = "中级工人", HireCost = 10000, DurationSec = 1800, RewardCount = 100, MinMineLevel = 1, MaxMineLevel = 4 },
+                [3] = { Name = "高级矿工", HireCost = 100000, DurationSec = 900, RewardCount = 200, MinMineLevel = 3, MaxMineLevel = 5 },
+            },
+            OrePool = {
+                { ItemId = 8310000, Name = "石头", MineLevel = 1 },
+                { ItemId = 8310003, Name = "煤矿", MineLevel = 1 },
+                { ItemId = 8310004, Name = "粗铁矿", MineLevel = 2 },
+                { ItemId = 8310005, Name = "粗铜矿", MineLevel = 2 },
+                { ItemId = 8310006, Name = "石英矿", MineLevel = 2 },
+                { ItemId = 8310007, Name = "粗金矿", MineLevel = 3 },
+                { ItemId = 8310008, Name = "铝土矿", MineLevel = 3 },
+                { ItemId = 8310009, Name = "钻石矿", MineLevel = 4 },
+                { ItemId = 8310010, Name = "红宝石矿", MineLevel = 4 },
+                { ItemId = 8310011, Name = "玉矿石", MineLevel = 5 },
+            },
+            GetWorker = function(WorkerId)
+                return TalentMarketConfig.Workers[math.floor(tonumber(WorkerId) or 0)]
+            end,
+            GetFirstWorkerId = function()
+                return 1
+            end,
+            NextWorkerId = function(CurrentId)
+                local Cur = math.floor(tonumber(CurrentId) or 0)
+                if Cur == 1 then
+                    return 2
+                elseif Cur == 2 then
+                    return 3
+                end
+                return 1
+            end,
+            RollRewards = function(WorkerId)
+                local Worker = TalentMarketConfig.GetWorker(WorkerId)
+                if Worker == nil then
+                    return nil
+                end
+                local Pool = {}
+                for _, Ore in ipairs(TalentMarketConfig.OrePool) do
+                    if Ore.MineLevel >= Worker.MinMineLevel and Ore.MineLevel <= Worker.MaxMineLevel then
+                        Pool[#Pool + 1] = Ore
+                    end
+                end
+                local Rewards = {}
+                for _ = 1, math.floor(tonumber(Worker.RewardCount) or 0) do
+                    local Ore = Pool[math.random(1, #Pool)]
+                    Rewards[Ore.ItemId] = (Rewards[Ore.ItemId] or 0) + 1
+                end
+                return Rewards
+            end,
+            FormatDuration = function(DurationSec)
+                return tostring(math.floor((tonumber(DurationSec) or 0) / 60)) .. "分钟"
+            end,
+            FormatRewards = function(Rewards)
+                local Lines = {}
+                for ItemId, Count in pairs(Rewards or {}) do
+                    Lines[#Lines + 1] = tostring(ItemId) .. " x" .. tostring(Count)
+                end
+                table.sort(Lines)
+                return table.concat(Lines, "、")
+            end,
+        }
+    end
+end
+
 local SmeltingConfig = nil
 do
     local Ok, Mod = pcall(function()
@@ -420,6 +497,9 @@ function UGCPlayerController:ReceiveBeginPlay()
     end
     if self.bMineTeleportUnlocked == nil then
         self.bMineTeleportUnlocked = false
+    end
+    if self.bTalentMarketUnlocked == nil then
+        self.bTalentMarketUnlocked = false
     end
     if self.bSmelterUnlocked == nil then
         self.bSmelterUnlocked = false
@@ -1044,7 +1124,16 @@ local SMELT_STATE_RUNNING = 1
 local SMELT_STATE_READY = 2
 
 local function NowSec()
-    local T = os.time()
+    local T = nil
+    if UGCGameSystem and UGCGameSystem.GetServerTimeSec then
+        local Ok, ServerTime = pcall(UGCGameSystem.GetServerTimeSec)
+        if Ok then
+            T = ServerTime
+        end
+    end
+    if T == nil then
+        T = os.time()
+    end
     return tonumber(T) or 0
 end
 
@@ -1567,6 +1656,257 @@ function UGCPlayerController:RequestCollectSmelt(Slot)
     UnrealNetwork.CallUnrealRPC(self, self, "Server_CollectSmelt", Slot)
 end
 
+--- ========== 人才市场 ==========
+
+local TALENT_JOB_IDLE = 0
+local TALENT_JOB_RUNNING = 1
+local TALENT_JOB_READY = 2
+
+local function IsTalentMarketUnlocked(PC)
+    return PC ~= nil and PC.bTalentMarketUnlocked == true
+end
+
+local function EnsureTalentJob(PC)
+    if PC.TalentJob == nil then
+        PC.TalentJob = {
+            State = TALENT_JOB_IDLE,
+            WorkerId = 0,
+            EndTime = 0,
+            Rewards = nil,
+        }
+    end
+    return PC.TalentJob
+end
+
+local function RefreshTalentJobState(Job)
+    if Job == nil then
+        return
+    end
+    if Job.State == TALENT_JOB_RUNNING and NowSec() >= (tonumber(Job.EndTime) or 0) then
+        Job.State = TALENT_JOB_READY
+    end
+end
+
+local function GetTalentRewardTotal(Rewards)
+    local Total = 0
+    if type(Rewards) == "table" then
+        for _, Count in pairs(Rewards) do
+            Total = Total + math.floor(tonumber(Count) or 0)
+        end
+    end
+    return Total
+end
+
+local function SyncTalentJobToClient(PC)
+    local Job = EnsureTalentJob(PC)
+    RefreshTalentJobState(Job)
+    local Summary = TalentMarketConfig.FormatRewards(Job.Rewards or {})
+    InvokeClient(
+        PC, "Client_TalentJobSync",
+        Job.State or TALENT_JOB_IDLE,
+        Job.WorkerId or 0,
+        Job.EndTime or 0,
+        GetTalentRewardTotal(Job.Rewards),
+        Summary
+    )
+end
+
+function UGCPlayerController:GetTalentMarketStatus(WorkerId)
+    local Job = EnsureTalentJob(self)
+    if not UGCGameSystem.IsServer() and type(self.ClientTalentJob) == "table" then
+        Job = self.ClientTalentJob
+    end
+    RefreshTalentJobState(Job)
+    WorkerId = math.floor(tonumber(WorkerId) or 0)
+    if TalentMarketConfig.GetWorker(WorkerId) == nil then
+        WorkerId = TalentMarketConfig.GetFirstWorkerId()
+    end
+    local Worker = TalentMarketConfig.GetWorker(WorkerId) or {}
+    local RemainingSec = math.max(0, math.floor((tonumber(Job.EndTime) or 0) - NowSec()))
+    return {
+        bUnlocked = IsTalentMarketUnlocked(self),
+        UnlockCost = TalentMarketConfig.UnlockCost or 5000,
+        GoldCount = GetGoldCount(self),
+        WorkerId = WorkerId,
+        WorkerName = Worker.Name or "?",
+        HireCost = Worker.HireCost or 0,
+        DurationSec = Worker.DurationSec or 0,
+        DurationText = TalentMarketConfig.FormatDuration(Worker.DurationSec or 0),
+        RewardCount = Worker.RewardCount or 0,
+        MinMineLevel = Worker.MinMineLevel or 1,
+        MaxMineLevel = Worker.MaxMineLevel or 1,
+        JobState = Job.State or TALENT_JOB_IDLE,
+        JobWorkerId = Job.WorkerId or 0,
+        JobWorkerName = (TalentMarketConfig.GetWorker(Job.WorkerId or 0) or {}).Name or "",
+        EndTime = Job.EndTime or 0,
+        RemainingSec = RemainingSec,
+        RewardTotal = math.floor(tonumber(Job.RewardTotal) or GetTalentRewardTotal(Job.Rewards)),
+        RewardSummary = tostring(Job.RewardSummary or TalentMarketConfig.FormatRewards(Job.Rewards or {})),
+        LastMsg = self.TalentMarketLastMsg or "",
+    }
+end
+
+function UGCPlayerController:Client_TalentMarketNotify(Msg)
+    Msg = tostring(Msg or "")
+    self.TalentMarketLastMsg = Msg
+    ugcprint("[TalentMarket] Notify: " .. Msg)
+    if self.OnTalentMarketNotify then
+        pcall(self.OnTalentMarketNotify, Msg)
+    end
+end
+
+function UGCPlayerController:Client_TalentMarketUnlocked()
+    self.bTalentMarketUnlocked = true
+    if self.OnTalentMarketUnlocked then
+        pcall(self.OnTalentMarketUnlocked)
+    end
+end
+
+function UGCPlayerController:Client_TalentJobSync(State, WorkerId, EndTime, RewardTotal, RewardSummary)
+    self.ClientTalentJob = {
+        State = math.floor(tonumber(State) or TALENT_JOB_IDLE),
+        WorkerId = math.floor(tonumber(WorkerId) or 0),
+        EndTime = math.floor(tonumber(EndTime) or 0),
+        RewardTotal = math.floor(tonumber(RewardTotal) or 0),
+        RewardSummary = tostring(RewardSummary or ""),
+    }
+    if self.OnTalentJobChanged then
+        pcall(self.OnTalentJobChanged)
+    end
+end
+
+function UGCPlayerController:Server_UnlockTalentMarket()
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    if IsTalentMarketUnlocked(self) then
+        InvokeClient(self, "Client_TalentMarketUnlocked")
+        InvokeClient(self, "Client_TalentMarketNotify", "人才市场已解锁")
+        return
+    end
+    local Cost = math.floor(tonumber(TalentMarketConfig.UnlockCost) or 5000)
+    if not TryRemoveGold(self, Cost) then
+        InvokeClient(self, "Client_TalentMarketNotify", "金币不足，解锁需要 " .. tostring(Cost))
+        return
+    end
+    self.bTalentMarketUnlocked = true
+    ugcprint("[TalentMarket] 人才市场已解锁")
+    InvokeClient(self, "Client_TalentMarketUnlocked")
+    InvokeClient(self, "Client_TalentMarketNotify", "解锁成功！可以雇佣矿工")
+end
+
+function UGCPlayerController:Server_HireTalentWorker(WorkerId)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    if not IsTalentMarketUnlocked(self) then
+        InvokeClient(
+            self, "Client_TalentMarketNotify",
+            "请先解锁人才市场（" .. tostring(TalentMarketConfig.UnlockCost or 5000) .. " 金币）"
+        )
+        return
+    end
+    WorkerId = math.floor(tonumber(WorkerId) or 0)
+    local Worker = TalentMarketConfig.GetWorker(WorkerId)
+    if Worker == nil then
+        InvokeClient(self, "Client_TalentMarketNotify", "工人类型无效")
+        return
+    end
+    local Job = EnsureTalentJob(self)
+    RefreshTalentJobState(Job)
+    if Job.State == TALENT_JOB_RUNNING then
+        local Remaining = math.max(0, math.floor((tonumber(Job.EndTime) or 0) - NowSec()))
+        InvokeClient(self, "Client_TalentMarketNotify", "已有矿工外出中，剩余 " .. TalentMarketConfig.FormatDuration(Remaining))
+        SyncTalentJobToClient(self)
+        return
+    end
+    if Job.State == TALENT_JOB_READY then
+        InvokeClient(self, "Client_TalentMarketNotify", "已有矿工完成，请先领取矿物")
+        SyncTalentJobToClient(self)
+        return
+    end
+    local Cost = math.floor(tonumber(Worker.HireCost) or 0)
+    if not TryRemoveGold(self, Cost) then
+        InvokeClient(self, "Client_TalentMarketNotify", "金币不足，雇佣需要 " .. tostring(Cost))
+        return
+    end
+    if not self.bTalentRandomSeeded then
+        self.bTalentRandomSeeded = true
+        math.randomseed(NowSec() + GetGoldCount(self) + WorkerId)
+    end
+    local Rewards = TalentMarketConfig.RollRewards(WorkerId)
+    if type(Rewards) ~= "table" then
+        TryAddItems(self, GOLD_ITEM_ID, Cost)
+        InvokeClient(self, "Client_TalentMarketNotify", "矿工奖励池配置错误，已退回费用")
+        return
+    end
+    Job.State = TALENT_JOB_RUNNING
+    Job.WorkerId = WorkerId
+    Job.EndTime = NowSec() + math.floor(tonumber(Worker.DurationSec) or 0)
+    Job.Rewards = Rewards
+    local Msg = string.format(
+        "已雇佣%s，%s后完成，预计带回%d个矿物",
+        tostring(Worker.Name or "?"),
+        TalentMarketConfig.FormatDuration(Worker.DurationSec or 0),
+        GetTalentRewardTotal(Rewards)
+    )
+    ugcprint("[TalentMarket] " .. Msg)
+    InvokeClient(self, "Client_TalentMarketNotify", Msg)
+    SyncTalentJobToClient(self)
+end
+
+function UGCPlayerController:Server_CollectTalentJob()
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    local Job = EnsureTalentJob(self)
+    RefreshTalentJobState(Job)
+    if Job.State == TALENT_JOB_IDLE then
+        InvokeClient(self, "Client_TalentMarketNotify", "当前没有外出的矿工")
+        return
+    end
+    if Job.State == TALENT_JOB_RUNNING then
+        local Remaining = math.max(0, math.floor((tonumber(Job.EndTime) or 0) - NowSec()))
+        InvokeClient(self, "Client_TalentMarketNotify", "矿工还在挖矿，剩余 " .. TalentMarketConfig.FormatDuration(Remaining))
+        SyncTalentJobToClient(self)
+        return
+    end
+    local Rewards = Job.Rewards or {}
+    local Total = GetTalentRewardTotal(Rewards)
+    if Total <= 0 then
+        self.TalentJob = nil
+        InvokeClient(self, "Client_TalentMarketNotify", "奖励为空，已重置任务")
+        SyncTalentJobToClient(self)
+        return
+    end
+    for ItemId, Count in pairs(Rewards) do
+        if not TryAddItems(self, ItemId, Count) then
+            InvokeClient(self, "Client_TalentMarketNotify", "发放矿物失败，请稍后重试")
+            SyncTalentJobToClient(self)
+            return
+        end
+    end
+    local Worker = TalentMarketConfig.GetWorker(Job.WorkerId or 0) or {}
+    local Summary = TalentMarketConfig.FormatRewards(Rewards)
+    self.TalentJob = nil
+    local Msg = string.format("%s带回%d个矿物：%s", tostring(Worker.Name or "矿工"), Total, Summary)
+    ugcprint("[TalentMarket] " .. Msg)
+    InvokeClient(self, "Client_TalentMarketNotify", Msg)
+    SyncTalentJobToClient(self)
+end
+
+function UGCPlayerController:RequestUnlockTalentMarket()
+    InvokeServer(self, "Server_UnlockTalentMarket")
+end
+
+function UGCPlayerController:RequestHireTalentWorker(WorkerId)
+    InvokeServer(self, "Server_HireTalentWorker", WorkerId)
+end
+
+function UGCPlayerController:RequestCollectTalentJob()
+    InvokeServer(self, "Server_CollectTalentJob")
+end
+
 --- 矿石回收处：初始自动解锁，按策划价格表回收
 function UGCPlayerController:GetOreRecycleStatus(ItemId)
     ItemId = math.floor(tonumber(ItemId) or 0)
@@ -1844,6 +2184,7 @@ function UGCPlayerController:GetAvailableServerRPCs()
         "Server_UnlockMineTeleport", "Server_TeleportToMineZone",
         "Server_UnlockSmeltingPlant", "Server_UpgradeSmeltingPlant", "Server_UnlockFurnace",
         "Server_StartSmelt", "Server_SkipSmelt", "Server_CollectSmelt",
+        "Server_UnlockTalentMarket", "Server_HireTalentWorker", "Server_CollectTalentJob",
         "Server_RecycleOre",
         "Server_UpgradeWarehouse"
 end
@@ -1855,12 +2196,14 @@ function UGCPlayerController:GetAvailableClientRPCs()
         "Client_MineTeleportNotify", "Client_MineTeleportUnlocked", "Client_MineTeleported",
         "Client_SmeltNotify", "Client_SmelterUnlocked", "Client_SmelterPlantLevel",
         "Client_FurnaceCount", "Client_SmeltSlotSync",
+        "Client_TalentMarketNotify", "Client_TalentMarketUnlocked", "Client_TalentJobSync",
         "Client_OreRecycleNotify",
         "Client_WarehouseNotify"
 end
 
 function UGCPlayerController:GetReplicatedProperties()
     return "bJadeShopUnlocked", "bMineTeleportUnlocked",
+        "bTalentMarketUnlocked",
         "bSmelterUnlocked", "SmelterPlantLevel", "UnlockedFurnaceCount"
 end
 

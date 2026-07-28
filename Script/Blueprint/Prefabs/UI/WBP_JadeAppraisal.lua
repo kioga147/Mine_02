@@ -100,11 +100,16 @@ local WBP_JadeAppraisal = {
     CurrentValue = BASE_VALUE,
     Opened = nil,
     bSelling = false,
+    bSellTimedOut = false, -- 出售回包超时后允许关闭，避免面板卡死
     bBound = false,
     Hovered = nil,
     PendingConfirm = nil, -- 弹窗待确认的格子索引；已翻开格子不再弹窗
     bRevealPending = false, -- 等待服务端翻格回包
 }
+local REVEAL_TIMEOUT_SEC = 5.0
+local SELL_TIMEOUT_SEC = 8.0
+local TIMER_REVEAL_PENDING = "JadeRevealPending"
+local TIMER_SELL_PENDING = "JadeSellPending"
 local function GetW(self, Name)
     if self[Name] ~= nil then
         return self[Name]
@@ -1050,6 +1055,7 @@ function WBP_JadeAppraisal:Construct()
     self.Hovered = {}
     self.PendingConfirm = nil
     self.bSelling = false
+    self.bSellTimedOut = false
     self.bRevealPending = false
     self.bBound = false
     local BtnSell = GetW(self, "Btn_Sell")
@@ -1094,6 +1100,8 @@ function WBP_JadeAppraisal:Destruct()
         UGCTimerUtility.RemoveLuaTimerByName("JadeOpenIntro")
         UGCTimerUtility.RemoveLuaTimerByName("JadeOpenIntroSettle")
         UGCTimerUtility.RemoveLuaTimerByName("JadeScreenLayout")
+        UGCTimerUtility.RemoveLuaTimerByName(TIMER_REVEAL_PENDING)
+        UGCTimerUtility.RemoveLuaTimerByName(TIMER_SELL_PENDING)
         for Index = 0, CELL_COUNT - 1 do
             UGCTimerUtility.RemoveLuaTimerByName("JadeRevealA_" .. tostring(Index))
             UGCTimerUtility.RemoveLuaTimerByName("JadeRevealB_" .. tostring(Index))
@@ -1247,7 +1255,7 @@ end
 
 --- 应用服务端翻格结果（等级与价值均来自服务端）
 function WBP_JadeAppraisal:ApplyServerReveal(Index, Level, NewValue)
-    self.bRevealPending = false
+    self:ClearRevealPendingWatch()
     Index = math.floor(tonumber(Index) or -1)
     Level = math.floor(tonumber(Level) or 0)
     NewValue = math.floor(tonumber(NewValue) or 0)
@@ -1272,6 +1280,58 @@ function WBP_JadeAppraisal:ApplyServerReveal(Index, Level, NewValue)
     self.CurrentValue = NewValue
     self:RefreshValueText()
     self:PlayValueBump()
+end
+
+function WBP_JadeAppraisal:ClearRevealPendingWatch()
+    self.bRevealPending = false
+    if UGCTimerUtility and UGCTimerUtility.RemoveLuaTimerByName then
+        UGCTimerUtility.RemoveLuaTimerByName(TIMER_REVEAL_PENDING)
+    end
+end
+
+function WBP_JadeAppraisal:ArmRevealPendingWatch()
+    self.bRevealPending = true
+    DelayCall(TIMER_REVEAL_PENDING, REVEAL_TIMEOUT_SEC, function()
+        if not IsSelfValid(self) then
+            return
+        end
+        if not self.bRevealPending then
+            return
+        end
+        self.bRevealPending = false
+        ugcprint("[Jade] 翻格回包超时，已解除锁定")
+        local TxtHint = GetW(self, "Txt_Hint")
+        if TxtHint and TxtHint.SetText then
+            TxtHint:SetText("翻格超时，请重试点击格子")
+            SetTextColor(TxtHint, COLOR.ToastTxt)
+        end
+    end)
+end
+
+function WBP_JadeAppraisal:ClearSellPendingWatch()
+    if UGCTimerUtility and UGCTimerUtility.RemoveLuaTimerByName then
+        UGCTimerUtility.RemoveLuaTimerByName(TIMER_SELL_PENDING)
+    end
+end
+
+function WBP_JadeAppraisal:ArmSellPendingWatch()
+    self.bSellTimedOut = false
+    DelayCall(TIMER_SELL_PENDING, SELL_TIMEOUT_SEC, function()
+        if not IsSelfValid(self) then
+            return
+        end
+        if not self.bSelling then
+            return
+        end
+        -- 仍保持 bSelling，禁止再次出售（防重复结算）；仅放行关闭
+        self.bSellTimedOut = true
+        ugcprint("[Jade] 出售回包超时，已允许关闭面板")
+        local TxtHint = GetW(self, "Txt_Hint")
+        if TxtHint and TxtHint.SetText then
+            TxtHint:SetText("结算超时 · 可关闭后重试")
+            SetTextColor(TxtHint, COLOR.ToastTxt)
+        end
+    end)
 end
 
 function WBP_JadeAppraisal:OnCellClicked(Index)
@@ -1299,15 +1359,16 @@ function WBP_JadeAppraisal:OnConfirmYesClicked()
         return
     end
     -- 向服务端请求翻格，本地不 math.random
-    self.bRevealPending = true
     self:HideConfirmDialog()
     local PC = UGCGameSystem.GetLocalPlayerController()
     if PC and PC.RequestRevealJadeCell then
+        self:ArmRevealPendingWatch()
         PC:RequestRevealJadeCell(Index)
     elseif PC then
+        self:ArmRevealPendingWatch()
         UnrealNetwork.CallUnrealRPC(PC, PC, "Server_RevealJadeCell", Index)
     else
-        self.bRevealPending = false
+        self:ClearRevealPendingWatch()
     end
 end
 
@@ -1320,6 +1381,8 @@ function WBP_JadeAppraisal:OnSellClicked()
         return
     end
     self.bSelling = true
+    self.bSellTimedOut = false
+    self:ClearRevealPendingWatch()
     self:HideConfirmDialog()
     -- 展示本地预估；实际结算金额以服务端会话为准
     local PreviewValue = math.floor(self.CurrentValue + 0.5)
@@ -1343,16 +1406,28 @@ function WBP_JadeAppraisal:OnSellClicked()
     end
     local PC = UGCGameSystem.GetLocalPlayerController()
     if PC and PC.RequestSellAppraisedJade then
+        self:ArmSellPendingWatch()
         PC:RequestSellAppraisedJade()
     elseif PC then
+        self:ArmSellPendingWatch()
         UnrealNetwork.CallUnrealRPC(PC, PC, "Server_SellAppraisedJade")
+    else
+        -- 无 PC：解除出售锁，避免永久卡死
+        self.bSelling = false
+        self.bSellTimedOut = false
+        if BtnSell and BtnSell.SetIsEnabled then
+            BtnSell:SetIsEnabled(true)
+        end
     end
 end
 
 function WBP_JadeAppraisal:OnCloseClicked()
-    if self.bSelling then
+    -- 出售进行中默认不可关；超时后允许关闭以免卡死
+    if self.bSelling and not self.bSellTimedOut then
         return
     end
+    self:ClearRevealPendingWatch()
+    self:ClearSellPendingWatch()
     local PC = UGCGameSystem.GetLocalPlayerController()
     if PC and PC.RequestCancelManualAppraisal then
         PC:RequestCancelManualAppraisal()

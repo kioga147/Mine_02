@@ -140,6 +140,7 @@ function BP_JadeAppraisalFacility:UnbindPCCallbacks()
     PC.OnJadeShopNotify = nil
     PC.OnJadeShopUnlocked = nil
     PC.OnJadeQuickResult = nil
+    PC.OnJadeManualUIOpened = nil
 end
 
 function BP_JadeAppraisalFacility:RefreshPromptUI()
@@ -285,15 +286,20 @@ end
 
 function BP_JadeAppraisalFacility:OnManualClicked()
     if not self.bLocalPlayerInside then
+        ugcprint("[JadeFacility] 手动鉴定忽略：玩家不在范围内")
         return
     end
     local PC = GetLocalPC()
     if PC == nil then
+        ugcprint("[JadeFacility] 手动鉴定忽略：无本地 PC")
         return
     end
     ugcprint("[JadeFacility] 请求手动鉴定（服务端开会话）")
-    -- 先收起提示；服务端校验失败会 Notify，走近可再开提示
-    self:HidePrompt()
+    -- 不要先 HidePrompt：失败时提示层还在，才能显示 Notify；成功开鉴定 UI 后再收起
+    local Facility = self
+    PC.OnJadeManualUIOpened = function()
+        Facility:HidePrompt()
+    end
     if PC.RequestBeginManualAppraisal then
         PC:RequestBeginManualAppraisal()
     else

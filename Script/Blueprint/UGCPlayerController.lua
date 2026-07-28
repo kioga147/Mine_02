@@ -203,8 +203,9 @@ end
 
 -- 玉石鉴定逻辑对齐 TESTWK；物品 ID 使用 Mine_02 现有表：
 -- 8310011 = 玉矿石（未鉴定） Mine_10
--- 8310018 = 玉石 Mine_17（兼容）
+-- 8310018 = 玉石 Mine_17（兼容；当前与 8310011 同为可鉴定原料，鉴定出售直接发金币、不产出 8310018）
 -- 8310002 = 金币 Coin
+-- 注意：取消鉴定时「返回/产出何种物品」需策划讨论后再定（当前实现为开会话前不扣玉，关闭仅清会话）。
 local JADE_ITEM_ID = 8310011
 local JADE_ITEM_ID_LEGACY = 8310018
 local GOLD_ITEM_ID = 8310002
@@ -370,6 +371,30 @@ local function IsLocalPC(PC)
     end
     local LocalPC = UGCGameSystem.GetLocalPlayerController()
     return LocalPC ~= nil and LocalPC == PC
+end
+
+--- ListenServer 主机上 Client RPC 往往不会回投到本机，本机直调；远端仍走 RPC
+local function InvokeClient(PC, FuncName, ...)
+    if not PC or not FuncName then
+        return
+    end
+    if IsLocalPC(PC) and type(PC[FuncName]) == "function" then
+        PC[FuncName](PC, ...)
+        return
+    end
+    UnrealNetwork.CallUnrealRPC(PC, PC, FuncName, ...)
+end
+
+--- 已在服务端（含 ListenServer 主机）时直调 Server_，避免 RPC 丢失
+local function InvokeServer(PC, FuncName, ...)
+    if not PC or not FuncName then
+        return
+    end
+    if UGCGameSystem.IsServer() and type(PC[FuncName]) == "function" then
+        PC[FuncName](PC, ...)
+        return
+    end
+    UnrealNetwork.CallUnrealRPC(PC, PC, FuncName, ...)
 end
 
 local UGCPlayerController = {}
@@ -623,14 +648,30 @@ function UGCPlayerController:Client_JadeShopNotify(Msg)
     end
 end
 
+local function NotifyJadeManualUIOpened(PC)
+    if PC and PC.OnJadeManualUIOpened then
+        pcall(PC.OnJadeManualUIOpened)
+        PC.OnJadeManualUIOpened = nil
+    end
+end
+
 --- 仅本机创建面板（由服务端 Begin 成功后 Client_Open 调用）
 function UGCPlayerController:OpenJadeAppraisalUI()
-    if self.JadeAppraisalWidget or self.bOpeningJadeUI then
-        ugcprint("[Jade] 面板已存在或正在打开")
-        return false
-    end
     if not IsLocalPC(self) then
         ugcprint("[Jade] 非本地PC，跳过开UI")
+        return false
+    end
+
+    -- 面板已在：仍通知设施收起提示层，避免连点手动鉴定后提示层残留
+    if self.JadeAppraisalWidget then
+        ugcprint("[Jade] 面板已存在，通知打开完成")
+        NotifyJadeManualUIOpened(self)
+        return true
+    end
+
+    -- 正在异步创建：保留 OnJadeManualUIOpened，等回调里通知
+    if self.bOpeningJadeUI then
+        ugcprint("[Jade] 面板正在打开，等待回调通知")
         return false
     end
 
@@ -647,6 +688,13 @@ function UGCPlayerController:OpenJadeAppraisalUI()
             return
         end
         if self.JadeAppraisalWidget then
+            -- 丢弃重复实例，仍通知提示层收起
+            if Widget.RemoveFromParent then
+                pcall(function()
+                    Widget:RemoveFromParent()
+                end)
+            end
+            NotifyJadeManualUIOpened(self)
             return
         end
         self.JadeAppraisalWidget = Widget
@@ -655,12 +703,23 @@ function UGCPlayerController:OpenJadeAppraisalUI()
             Widget:ApplyScreenLayout()
         end
         ugcprint("[Jade] 鉴定面板已挂载")
+        NotifyJadeManualUIOpened(self)
     end)
     return true
 end
 
 function UGCPlayerController:Client_OpenJadeAppraisal()
     ugcprint("[Jade] Client_OpenJadeAppraisal")
+    -- 每次 Begin 都是新会话：先拆掉旧面板，避免 UI 重置而服务端仍沿用旧价值
+    if self.JadeAppraisalWidget then
+        if self.JadeAppraisalWidget.RemoveFromParent then
+            pcall(function()
+                self.JadeAppraisalWidget:RemoveFromParent()
+            end)
+        end
+        self.JadeAppraisalWidget = nil
+    end
+    self.bOpeningJadeUI = false
     self:OpenJadeAppraisalUI()
 end
 
@@ -676,26 +735,29 @@ end
 
 --- 服务端开启手动鉴定会话（权威价值从这里开始记账）
 function UGCPlayerController:Server_BeginManualAppraisal()
+    ugcprint("[Jade] Server_BeginManualAppraisal unlocked="
+        .. tostring(IsJadeShopUnlocked(self))
+        .. " jade=" .. tostring(GetJadeCount(self)))
     if not IsJadeShopUnlocked(self) then
-        UnrealNetwork.CallUnrealRPC(
-            self, self, "Client_JadeShopNotify",
+        InvokeClient(
+            self, "Client_JadeShopNotify",
             "请先解锁玉石鉴定所（" .. tostring(UNLOCK_COST) .. " 金币）"
         )
         return
     end
     if GetJadeCount(self) < 1 then
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_JadeShopNotify", "背包中没有未鉴定玉石")
+        InvokeClient(self, "Client_JadeShopNotify", "背包中没有未鉴定玉石")
         return
     end
-    if not GetManualSession(self) then
-        self.JadeManualSession = {
-            Active = true,
-            CurrentValue = JADE_BASE_VALUE,
-            Opened = {},
-        }
-        ugcprint("[Jade] 手动鉴定会话已创建 value=" .. tostring(JADE_BASE_VALUE))
-    end
-    UnrealNetwork.CallUnrealRPC(self, self, "Client_OpenJadeAppraisal")
+    -- 每次进入手动鉴定都重建会话，与客户端新面板（BASE_VALUE / 空格）对齐
+    self.JadeManualSession = {
+        Active = true,
+        CurrentValue = JADE_BASE_VALUE,
+        Opened = {},
+    }
+    ugcprint("[Jade] 手动鉴定会话已创建 value=" .. tostring(JADE_BASE_VALUE))
+    -- 关键：ListenServer 主机必须直调，否则鉴定 UI 不会出现
+    InvokeClient(self, "Client_OpenJadeAppraisal")
 end
 
 --- 服务端翻格：随机等级并回传权威价值
@@ -706,7 +768,7 @@ function UGCPlayerController:Server_RevealJadeCell(Index)
     end
     local Session = GetManualSession(self)
     if not Session then
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_JadeShopNotify", "鉴定会话无效，请重新进入")
+        InvokeClient(self, "Client_JadeShopNotify", "鉴定会话无效，请重新进入")
         return
     end
     if Session.Opened[Index] ~= nil then
@@ -720,7 +782,7 @@ function UGCPlayerController:Server_RevealJadeCell(Index)
         ValueInt = 0
     end
     ugcprint(string.format("[Jade] Reveal cell=%d level=%d value=%d", Index, Level, ValueInt))
-    UnrealNetwork.CallUnrealRPC(self, self, "Client_JadeCellRevealed", Index, Level, ValueInt)
+    InvokeClient(self, "Client_JadeCellRevealed", Index, Level, ValueInt)
 end
 
 function UGCPlayerController:Client_JadeCellRevealed(Index, Level, NewValue)
@@ -739,8 +801,8 @@ end
 function UGCPlayerController:Server_SellAppraisedJade()
     local Session = GetManualSession(self)
     if not Session then
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_JadeShopNotify", "出售失败：无鉴定会话")
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_CloseJadeAppraisal")
+        InvokeClient(self, "Client_JadeShopNotify", "出售失败：无鉴定会话")
+        InvokeClient(self, "Client_CloseJadeAppraisal")
         return
     end
     local SellValue = math.floor((Session.CurrentValue or 0) + 0.5)
@@ -749,8 +811,8 @@ function UGCPlayerController:Server_SellAppraisedJade()
     end
     if not RemoveOneJade(self) then
         ClearManualSession(self)
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_JadeShopNotify", "出售失败：没有玉石")
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_CloseJadeAppraisal")
+        InvokeClient(self, "Client_JadeShopNotify", "出售失败：没有玉石")
+        InvokeClient(self, "Client_CloseJadeAppraisal")
         return
     end
     if SellValue > 0 then
@@ -758,38 +820,36 @@ function UGCPlayerController:Server_SellAppraisedJade()
     end
     ClearManualSession(self)
     ugcprint("[Jade] 出售结算 value=" .. tostring(SellValue))
-    UnrealNetwork.CallUnrealRPC(
-        self, self, "Client_JadeShopNotify",
-        "售出成功：获得 " .. tostring(SellValue) .. " 金币"
-    )
-    UnrealNetwork.CallUnrealRPC(self, self, "Client_CloseJadeAppraisal")
+    InvokeClient(self, "Client_JadeShopNotify", "售出成功：获得 " .. tostring(SellValue) .. " 金币")
+    InvokeClient(self, "Client_CloseJadeAppraisal")
 end
 
 --- 关闭面板不卖：清会话，不扣玉石
+--- 取消鉴定返回的物品需策划讨论（若改为开会话时扣玉，关闭时退回哪一 ItemID 待定）
 function UGCPlayerController:Server_CancelManualAppraisal()
     ClearManualSession(self)
     ugcprint("[Jade] 手动鉴定会话已取消")
-    UnrealNetwork.CallUnrealRPC(self, self, "Client_CloseJadeAppraisal")
+    InvokeClient(self, "Client_CloseJadeAppraisal")
 end
 
 --- 解锁鉴定所（15000）
 function UGCPlayerController:Server_UnlockJadeShop()
     if IsJadeShopUnlocked(self) then
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_JadeShopNotify", "鉴定所已解锁")
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_JadeShopUnlocked")
+        InvokeClient(self, "Client_JadeShopNotify", "鉴定所已解锁")
+        InvokeClient(self, "Client_JadeShopUnlocked")
         return
     end
     if not TryRemoveGold(self, UNLOCK_COST) then
-        UnrealNetwork.CallUnrealRPC(
-            self, self, "Client_JadeShopNotify",
+        InvokeClient(
+            self, "Client_JadeShopNotify",
             "金币不足，解锁需要 " .. tostring(UNLOCK_COST)
         )
         return
     end
     self.bJadeShopUnlocked = true
     ugcprint("[Jade] 鉴定所已解锁")
-    UnrealNetwork.CallUnrealRPC(self, self, "Client_JadeShopUnlocked")
-    UnrealNetwork.CallUnrealRPC(self, self, "Client_JadeShopNotify", "解锁成功！可进行鉴定")
+    InvokeClient(self, "Client_JadeShopUnlocked")
+    InvokeClient(self, "Client_JadeShopNotify", "解锁成功！可进行鉴定")
 end
 
 function UGCPlayerController:Client_JadeShopUnlocked()
@@ -803,30 +863,35 @@ end
 --- 快速鉴定：花 3000，随机 0～10000
 function UGCPlayerController:Server_QuickAppraiseJade()
     if not IsJadeShopUnlocked(self) then
-        UnrealNetwork.CallUnrealRPC(
-            self, self, "Client_JadeShopNotify",
+        InvokeClient(
+            self, "Client_JadeShopNotify",
             "请先解锁玉石鉴定所（" .. tostring(UNLOCK_COST) .. " 金币）"
         )
         return
     end
+    -- 手动鉴定进行中禁止快速鉴定，避免扣走会话对应的玉石
+    if GetManualSession(self) then
+        InvokeClient(self, "Client_JadeShopNotify", "请先结束当前手动鉴定（出售或关闭）")
+        return
+    end
     if GetJadeCount(self) < 1 then
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_JadeShopNotify", "背包中没有未鉴定玉石")
+        InvokeClient(self, "Client_JadeShopNotify", "背包中没有未鉴定玉石")
         return
     end
     if GetGoldCount(self) < QUICK_COST then
-        UnrealNetwork.CallUnrealRPC(
-            self, self, "Client_JadeShopNotify",
+        InvokeClient(
+            self, "Client_JadeShopNotify",
             "金币不足，快速鉴定需要 " .. tostring(QUICK_COST)
         )
         return
     end
     if not TryRemoveGold(self, QUICK_COST) then
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_JadeShopNotify", "扣费失败")
+        InvokeClient(self, "Client_JadeShopNotify", "扣费失败")
         return
     end
     if not RemoveOneJade(self) then
         UGCBackpackSystemV2.AddItemV2(self, GOLD_ITEM_ID, QUICK_COST)
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_JadeShopNotify", "没有玉石，已退回费用")
+        InvokeClient(self, "Client_JadeShopNotify", "没有玉石，已退回费用")
         return
     end
     local Roll = math.random(0, 10000)
@@ -834,7 +899,7 @@ function UGCPlayerController:Server_QuickAppraiseJade()
         UGCBackpackSystemV2.AddItemV2(self, GOLD_ITEM_ID, Roll)
     end
     ugcprint("[Jade] 快速鉴定结果=" .. tostring(Roll))
-    UnrealNetwork.CallUnrealRPC(self, self, "Client_JadeQuickResult", Roll)
+    InvokeClient(self, "Client_JadeQuickResult", Roll)
 end
 
 function UGCPlayerController:Client_JadeQuickResult(Roll)
@@ -847,27 +912,27 @@ function UGCPlayerController:Client_JadeQuickResult(Roll)
 end
 
 function UGCPlayerController:RequestUnlockJadeShop()
-    UnrealNetwork.CallUnrealRPC(self, self, "Server_UnlockJadeShop")
+    InvokeServer(self, "Server_UnlockJadeShop")
 end
 
 function UGCPlayerController:RequestQuickAppraiseJade()
-    UnrealNetwork.CallUnrealRPC(self, self, "Server_QuickAppraiseJade")
+    InvokeServer(self, "Server_QuickAppraiseJade")
 end
 
 function UGCPlayerController:RequestBeginManualAppraisal()
-    UnrealNetwork.CallUnrealRPC(self, self, "Server_BeginManualAppraisal")
+    InvokeServer(self, "Server_BeginManualAppraisal")
 end
 
 function UGCPlayerController:RequestRevealJadeCell(Index)
-    UnrealNetwork.CallUnrealRPC(self, self, "Server_RevealJadeCell", Index)
+    InvokeServer(self, "Server_RevealJadeCell", Index)
 end
 
 function UGCPlayerController:RequestSellAppraisedJade()
-    UnrealNetwork.CallUnrealRPC(self, self, "Server_SellAppraisedJade")
+    InvokeServer(self, "Server_SellAppraisedJade")
 end
 
 function UGCPlayerController:RequestCancelManualAppraisal()
-    UnrealNetwork.CallUnrealRPC(self, self, "Server_CancelManualAppraisal")
+    InvokeServer(self, "Server_CancelManualAppraisal")
 end
 
 --- ========== 矿区传送大厅 ==========

@@ -2,13 +2,9 @@
 --Edit Below--
 UGCGameSystem.UGCRequire('Script.Common.ue_enum_custom')
 local UGCGameState = {}; 
--- function UGCGameState:ReceiveBeginPlay()
 
--- end
--- function UGCGameState:ReceiveTick(DeltaTime)
+function UGCGameState:ReceiveBeginPlay()
+    UGCGameState.SuperClass.ReceiveBeginPlay(self)
+end
 
--- end
--- function UGCGameState:ReceiveEndPlay()
- 
--- end
 return UGCGameState;

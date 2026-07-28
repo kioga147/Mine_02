@@ -22,6 +22,21 @@ local AXE_LEVEL_BY_CLASS = {
     ["advanced_miningtruck"] = 5,
 }
 
+local MINE_CAR_SPEED_SCALE = 4.0
+
+local BP_BackpackComponentV2_Custom = nil
+local function GetBackpackComponent()
+    if not BP_BackpackComponentV2_Custom then
+        if UGCGameSystem and UGCGameSystem.UGCRequire then
+            local Ok, Mod = pcall(UGCGameSystem.UGCRequire, "Script.GamePartCustom.BackpackV2.BP_BackpackComponentV2_Custom")
+            if Ok and Mod then
+                BP_BackpackComponentV2_Custom = Mod
+            end
+        end
+    end
+    return BP_BackpackComponentV2_Custom
+end
+
 local function GetAxeLevelByClassName(ClassName)
     if not ClassName then
         return 0
@@ -43,18 +58,163 @@ function UGCPlayerPawn:ReceiveBeginPlay()
     
     UGCAttributeSystem.SetGameAttributeValue(self, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, NORMAL_SPEED_SCALE)
     UGCAttributeSystem.SetGameAttributeValue(self, "AxeLevel", 0)
+    
+    self.bIsMineCarMode = false
+end
+
+function UGCPlayerPawn:SetMineCarMode(bEnable)
+    ugcprint("[矿车模式] 设置矿车模式:", bEnable)
+    
+    local IsServer = false
+    if UGCGameSystem and UGCGameSystem.IsServer then
+        IsServer = UGCGameSystem.IsServer()
+    elseif UE_IsServer then
+        IsServer = UE_IsServer()
+    end
+    
+    ugcprint("[矿车模式] 当前是否服务器:", IsServer)
+    
+    if UGCPersistEffectSystem then
+        local BaseComp = UGCPersistEffectSystem.GetPersistBaseComponentByContent(self)
+        ugcprint("[矿车模式] PersistBaseComponent:", tostring(BaseComp))
+    end
+    
+    if IsServer then
+        ugcprint("[矿车模式] 已在服务器端，直接执行")
+        self:DoSetMineCarMode(bEnable)
+    else
+        ugcprint("[矿车模式] 在客户端，发送RPC到服务器")
+        if self.Server_SetMineCarMode then
+            self:Server_SetMineCarMode(bEnable)
+        else
+            ugcprint("[矿车模式] ❌ Server_SetMineCarMode RPC不存在")
+            self:DoSetMineCarMode(bEnable)
+        end
+    end
+end
+
+function UGCPlayerPawn:Server_SetMineCarMode(bEnable)
+    ugcprint("[矿车模式] Server_SetMineCarMode:", bEnable)
+    self:DoSetMineCarMode(bEnable)
+end
+
+function UGCPlayerPawn:DoSetMineCarMode(bEnable)
+    if bEnable then
+        if self.bIsMineCarMode then
+            ugcprint("[矿车模式] ⚠️ 矿车模式已激活")
+            return
+        end
+        
+        self.bIsMineCarMode = true
+        UGCAttributeSystem.SetGameAttributeValue(self, 
+            UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, MINE_CAR_SPEED_SCALE)
+        
+        local BuffPath = "/Game/Mine_02/Asset/Blueprint/Prefabs/Buffs/Transform_Mningcar.Transform_Mningcar_C"
+        
+        if UGCPersistEffectSystem then
+            ugcprint("[矿车模式] 准备添加变身Buff")
+            
+            local BuffClass = nil
+            if UGCObjectUtility and UGCObjectUtility.LoadClass and UGCGameSystem and UGCGameSystem.GetUGCResourcesFullPath then
+                local FullPath = UGCGameSystem.GetUGCResourcesFullPath('Asset/Blueprint/Prefabs/Buffs/Transform_Mningcar.Transform_Mningcar_C')
+                ugcprint("[矿车模式] Buff完整路径:", FullPath)
+                
+                BuffClass = UGCObjectUtility.LoadClass(FullPath)
+                ugcprint("[矿车模式] LoadClass结果:", tostring(BuffClass))
+            end
+            
+            if not BuffClass then
+                ugcprint("[矿车模式] ⚠️ LoadClass失败，尝试直接使用路径")
+                BuffClass = BuffPath
+            end
+            
+            local Ok, Result = pcall(UGCPersistEffectSystem.AddBuffByClass, self, BuffClass)
+            if Ok then
+                ugcprint("[矿车模式] ✅ AddBuffByClass调用成功")
+                
+                local GetBuffsOk, Buffs = pcall(UGCPersistEffectSystem.GetBuffsByClass, self, BuffClass)
+                if GetBuffsOk and Buffs and type(Buffs) == "table" and #Buffs > 0 then
+                    ugcprint("[矿车模式] ✅ 确认Buff已添加，数量:", #Buffs)
+                else
+                    ugcprint("[矿车模式] ⚠️ GetBuffsByClass结果:", tostring(Buffs))
+                end
+            else
+                ugcprint("[矿车模式] ❌ AddBuffByClass调用失败:", tostring(Result))
+            end
+        else
+            ugcprint("[矿车模式] ❌ UGCPersistEffectSystem不可用")
+        end
+        
+        ugcprint("[矿车模式] ✅ 已切换到矿车模式")
+    else
+        self.bIsMineCarMode = false
+        
+        local BuffPath = "/Game/Mine_02/Asset/Blueprint/Prefabs/Buffs/Transform_Mningcar.Transform_Mningcar_C"
+        
+        if UGCPersistEffectSystem then
+            local BuffClass = nil
+            if UGCObjectUtility and UGCObjectUtility.LoadClass and UGCGameSystem and UGCGameSystem.GetUGCResourcesFullPath then
+                local FullPath = UGCGameSystem.GetUGCResourcesFullPath('Asset/Blueprint/Prefabs/Buffs/Transform_Mningcar.Transform_Mningcar_C')
+                BuffClass = UGCObjectUtility.LoadClass(FullPath)
+            end
+            
+            if not BuffClass then
+                BuffClass = BuffPath
+            end
+            
+            local Ok, Result = pcall(UGCPersistEffectSystem.RemoveBuffByClass, self, BuffClass)
+            if Ok then
+                ugcprint("[矿车模式] ✅ 已移除变身Buff")
+            else
+                ugcprint("[矿车模式] ❌ 移除变身Buff失败:", tostring(Result))
+            end
+        end
+        
+        local BackpackComp = GetBackpackComponent()
+        if BackpackComp and BackpackComp.GetBackpackWeightInfo then
+            local backpackWeightInfo = BackpackComp.GetBackpackWeightInfo(self)
+            if backpackWeightInfo and backpackWeightInfo.CurrentWeight >= HEAVY_WEIGHT_THRESHOLD then
+                UGCAttributeSystem.SetGameAttributeValue(self, 
+                    UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, HEAVY_SPEED_SCALE)
+            else
+                UGCAttributeSystem.SetGameAttributeValue(self, 
+                    UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, NORMAL_SPEED_SCALE)
+            end
+        end
+        
+        ugcprint("[矿车模式] ❌ 已退出矿车模式")
+    end
+end
+
+function UGCPlayerPawn:IsMineCarMode()
+    return self.bIsMineCarMode == true
+end
+
+function UGCPlayerPawn:UpdateSpeedByWeight()
+    if self.bIsMineCarMode then
+        return
+    end
+    
+    local BackpackComp = GetBackpackComponent()
+    if BackpackComp and BackpackComp.GetBackpackWeightInfo then
+        local backpackWeightInfo = BackpackComp.GetBackpackWeightInfo(self)
+        if backpackWeightInfo then
+            if backpackWeightInfo.CurrentWeight >= HEAVY_WEIGHT_THRESHOLD then
+                UGCAttributeSystem.SetGameAttributeValue(self, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, HEAVY_SPEED_SCALE)
+                ugcprint("[速度更新] 背包超重，速度降低至:", HEAVY_SPEED_SCALE)
+            else
+                UGCAttributeSystem.SetGameAttributeValue(self, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, NORMAL_SPEED_SCALE)
+                ugcprint("[速度更新] 背包负重正常，速度恢复至:", NORMAL_SPEED_SCALE)
+            end
+        end
+    end
 end
 
 function UGCPlayerPawn:ReceiveTick(DeltaTime)
     UGCPlayerPawn.SuperClass.ReceiveTick(self, DeltaTime)
     
-    local backpackWeightInfo = BP_BackpackComponentV2_Custom.GetBackpackWeightInfo(self)
-    if backpackWeightInfo then
-        if backpackWeightInfo.CurrentWeight >= HEAVY_WEIGHT_THRESHOLD then
-            UGCAttributeSystem.SetGameAttributeValue(self, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, HEAVY_SPEED_SCALE)
-        else
-            UGCAttributeSystem.SetGameAttributeValue(self, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, NORMAL_SPEED_SCALE)
-        end
+    if self.bIsMineCarMode then
+        return
     end
     
     local axeLevel = 0
@@ -100,6 +260,10 @@ end
 
 function UGCPlayerPawn:GetReplicatedProperties()
     return {"__SubObjectRepList", "Lazy"}
+end
+
+function UGCPlayerPawn:GetAvailableServerRPCs()
+    return "Server_SetMineCarMode"
 end
 
 return UGCPlayerPawn

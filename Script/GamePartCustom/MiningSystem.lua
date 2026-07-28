@@ -55,14 +55,20 @@ function MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
     end
     
     local currentWeapon = nil
-    if UGCWeaponManagerSystem.GetCurrentWeapon then
-        currentWeapon = UGCWeaponManagerSystem.GetCurrentWeapon(DamageCauser)
+    if UGCWeaponManagerSystem and UGCWeaponManagerSystem.GetCurrentWeapon then
+        local ok, weapon = pcall(UGCWeaponManagerSystem.GetCurrentWeapon, DamageCauser)
+        if ok then
+            currentWeapon = weapon
+        end
     end
     
     if not currentWeapon and DamageCauser.GetOwner then
         local owner = DamageCauser:GetOwner()
-        if owner and UGCWeaponManagerSystem.GetCurrentWeapon then
-            currentWeapon = UGCWeaponManagerSystem.GetCurrentWeapon(owner)
+        if owner and UGCWeaponManagerSystem and UGCWeaponManagerSystem.GetCurrentWeapon then
+            local ok, weapon = pcall(UGCWeaponManagerSystem.GetCurrentWeapon, owner)
+            if ok then
+                currentWeapon = weapon
+            end
         end
     end
     
@@ -86,9 +92,9 @@ function MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
             end
         end
         
-        if UGCWeaponManagerSystem.GetWeaponItemID then
-            local itemID = UGCWeaponManagerSystem.GetWeaponItemID(currentWeapon)
-            if itemID then
+        if UGCWeaponManagerSystem and UGCWeaponManagerSystem.GetWeaponItemID then
+            local ok, itemID = pcall(UGCWeaponManagerSystem.GetWeaponItemID, currentWeapon)
+            if ok and itemID then
                 local level = MiningSystem.GetAxeLevelByItemID(itemID)
                 if level > 0 then
                     return level
@@ -112,9 +118,9 @@ function MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
         return axeLevel
     end
     
-    if UGCWeaponManagerSystem.GetWeaponItemID then
-        local itemID = UGCWeaponManagerSystem.GetWeaponItemID(DamageCauser)
-        if itemID then
+    if UGCWeaponManagerSystem and UGCWeaponManagerSystem.GetWeaponItemID then
+        local ok, itemID = pcall(UGCWeaponManagerSystem.GetWeaponItemID, DamageCauser)
+        if ok and itemID then
             local level = MiningSystem.GetAxeLevelByItemID(itemID)
             if level > 0 then
                 return level

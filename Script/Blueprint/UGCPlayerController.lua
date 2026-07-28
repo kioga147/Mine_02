@@ -203,8 +203,9 @@ end
 
 -- 玉石鉴定逻辑对齐 TESTWK；物品 ID 使用 Mine_02 现有表：
 -- 8310011 = 玉矿石（未鉴定） Mine_10
--- 8310018 = 玉石 Mine_17（兼容）
+-- 8310018 = 玉石 Mine_17（兼容；当前与 8310011 同为可鉴定原料，鉴定出售直接发金币、不产出 8310018）
 -- 8310002 = 金币 Coin
+-- 注意：取消鉴定时「返回/产出何种物品」需策划讨论后再定（当前实现为开会话前不扣玉，关闭仅清会话）。
 local JADE_ITEM_ID = 8310011
 local JADE_ITEM_ID_LEGACY = 8310018
 local GOLD_ITEM_ID = 8310002
@@ -647,14 +648,30 @@ function UGCPlayerController:Client_JadeShopNotify(Msg)
     end
 end
 
+local function NotifyJadeManualUIOpened(PC)
+    if PC and PC.OnJadeManualUIOpened then
+        pcall(PC.OnJadeManualUIOpened)
+        PC.OnJadeManualUIOpened = nil
+    end
+end
+
 --- 仅本机创建面板（由服务端 Begin 成功后 Client_Open 调用）
 function UGCPlayerController:OpenJadeAppraisalUI()
-    if self.JadeAppraisalWidget or self.bOpeningJadeUI then
-        ugcprint("[Jade] 面板已存在或正在打开")
-        return false
-    end
     if not IsLocalPC(self) then
         ugcprint("[Jade] 非本地PC，跳过开UI")
+        return false
+    end
+
+    -- 面板已在：仍通知设施收起提示层，避免连点手动鉴定后提示层残留
+    if self.JadeAppraisalWidget then
+        ugcprint("[Jade] 面板已存在，通知打开完成")
+        NotifyJadeManualUIOpened(self)
+        return true
+    end
+
+    -- 正在异步创建：保留 OnJadeManualUIOpened，等回调里通知
+    if self.bOpeningJadeUI then
+        ugcprint("[Jade] 面板正在打开，等待回调通知")
         return false
     end
 
@@ -671,6 +688,13 @@ function UGCPlayerController:OpenJadeAppraisalUI()
             return
         end
         if self.JadeAppraisalWidget then
+            -- 丢弃重复实例，仍通知提示层收起
+            if Widget.RemoveFromParent then
+                pcall(function()
+                    Widget:RemoveFromParent()
+                end)
+            end
+            NotifyJadeManualUIOpened(self)
             return
         end
         self.JadeAppraisalWidget = Widget
@@ -679,16 +703,23 @@ function UGCPlayerController:OpenJadeAppraisalUI()
             Widget:ApplyScreenLayout()
         end
         ugcprint("[Jade] 鉴定面板已挂载")
-        if self.OnJadeManualUIOpened then
-            pcall(self.OnJadeManualUIOpened)
-            self.OnJadeManualUIOpened = nil
-        end
+        NotifyJadeManualUIOpened(self)
     end)
     return true
 end
 
 function UGCPlayerController:Client_OpenJadeAppraisal()
     ugcprint("[Jade] Client_OpenJadeAppraisal")
+    -- 每次 Begin 都是新会话：先拆掉旧面板，避免 UI 重置而服务端仍沿用旧价值
+    if self.JadeAppraisalWidget then
+        if self.JadeAppraisalWidget.RemoveFromParent then
+            pcall(function()
+                self.JadeAppraisalWidget:RemoveFromParent()
+            end)
+        end
+        self.JadeAppraisalWidget = nil
+    end
+    self.bOpeningJadeUI = false
     self:OpenJadeAppraisalUI()
 end
 
@@ -718,14 +749,13 @@ function UGCPlayerController:Server_BeginManualAppraisal()
         InvokeClient(self, "Client_JadeShopNotify", "背包中没有未鉴定玉石")
         return
     end
-    if not GetManualSession(self) then
-        self.JadeManualSession = {
-            Active = true,
-            CurrentValue = JADE_BASE_VALUE,
-            Opened = {},
-        }
-        ugcprint("[Jade] 手动鉴定会话已创建 value=" .. tostring(JADE_BASE_VALUE))
-    end
+    -- 每次进入手动鉴定都重建会话，与客户端新面板（BASE_VALUE / 空格）对齐
+    self.JadeManualSession = {
+        Active = true,
+        CurrentValue = JADE_BASE_VALUE,
+        Opened = {},
+    }
+    ugcprint("[Jade] 手动鉴定会话已创建 value=" .. tostring(JADE_BASE_VALUE))
     -- 关键：ListenServer 主机必须直调，否则鉴定 UI 不会出现
     InvokeClient(self, "Client_OpenJadeAppraisal")
 end
@@ -795,6 +825,7 @@ function UGCPlayerController:Server_SellAppraisedJade()
 end
 
 --- 关闭面板不卖：清会话，不扣玉石
+--- 取消鉴定返回的物品需策划讨论（若改为开会话时扣玉，关闭时退回哪一 ItemID 待定）
 function UGCPlayerController:Server_CancelManualAppraisal()
     ClearManualSession(self)
     ugcprint("[Jade] 手动鉴定会话已取消")
@@ -836,6 +867,11 @@ function UGCPlayerController:Server_QuickAppraiseJade()
             self, "Client_JadeShopNotify",
             "请先解锁玉石鉴定所（" .. tostring(UNLOCK_COST) .. " 金币）"
         )
+        return
+    end
+    -- 手动鉴定进行中禁止快速鉴定，避免扣走会话对应的玉石
+    if GetManualSession(self) then
+        InvokeClient(self, "Client_JadeShopNotify", "请先结束当前手动鉴定（出售或关闭）")
         return
     end
     if GetJadeCount(self) < 1 then

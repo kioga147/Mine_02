@@ -102,6 +102,22 @@ function Basic_MiningVehicle:OnDisuseV2()
     ugcprint("[矿车物品] 取消使用矿车物品，玩家:", tostring(Player))
     
     if Player and Player.SetMineCarMode then
+        if UGCPersistEffectSystem then
+            local FullPath = UGCGameSystem.GetUGCResourcesFullPath("Asset/Blueprint/Prefabs/Skills/BasicVehicle.BasicVehicle_C")
+            local SkillClass = UGCObjectUtility.LoadClass(FullPath)
+            if SkillClass then
+                local ExistSkills = UGCPersistEffectSystem.GetSkillsByClass(Player, SkillClass)
+                if ExistSkills and #ExistSkills > 0 then
+                    for _, SkillInst in ipairs(ExistSkills) do
+                        if UE.IsValid(SkillInst) then
+                            UGCPersistEffectSystem.RemoveSkillInstance(Player, SkillInst)
+                            ugcprint("[矿车物品] ✅ 已移除BasicVehicle技能实例")
+                        end
+                    end
+                end
+            end
+        end
+        
         Player:SetMineCarMode(false)
         ugcprint("[矿车物品] ❌ 矿车模式已取消")
     else
@@ -122,6 +138,22 @@ function Basic_MiningVehicle:OnUnEquip()
     ugcprint("[矿车物品] 卸下矿车物品，玩家:", tostring(Player))
     
     if Player and Player.SetMineCarMode then
+        if UGCPersistEffectSystem then
+            local FullPath = UGCGameSystem.GetUGCResourcesFullPath("Asset/Blueprint/Prefabs/Skills/BasicVehicle.BasicVehicle_C")
+            local SkillClass = UGCObjectUtility.LoadClass(FullPath)
+            if SkillClass then
+                local ExistSkills = UGCPersistEffectSystem.GetSkillsByClass(Player, SkillClass)
+                if ExistSkills and #ExistSkills > 0 then
+                    for _, SkillInst in ipairs(ExistSkills) do
+                        if UE.IsValid(SkillInst) then
+                            UGCPersistEffectSystem.RemoveSkillInstance(Player, SkillInst)
+                            ugcprint("[矿车物品] ✅ 已移除BasicVehicle技能实例")
+                        end
+                    end
+                end
+            end
+        end
+        
         Player:SetMineCarMode(false)
         ugcprint("[矿车物品] ❌ 卸下时取消矿车模式")
     else

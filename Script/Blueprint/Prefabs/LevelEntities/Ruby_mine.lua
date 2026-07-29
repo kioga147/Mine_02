@@ -10,21 +10,31 @@ local Ruby_mine = {
 
 UGCGameSystem.UGCRequire('Script.GameAttribute.game_attribute_type')
 local MiningSystem = UGCGameSystem.UGCRequire('Script.GamePartCustom.MiningSystem')
+local MineZoneManager = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire('Script.GamePartCustom.MineZoneManager')
+    end)
+    if Ok and type(Mod) == "table" then
+        MineZoneManager = Mod
+    end
+end
 
 function Ruby_mine:ReceiveBeginPlay()
     self.ShakeTime = 0
     self.CacheZ = self.StaticMesh:GetRelativeTransform().Translation.Z
+    if MineZoneManager and UGCGameSystem.IsServer() then
+        MineZoneManager.RegisterOre(self, "RubyOre")
+    end
 end
 
 function Ruby_mine:PreOverrideDamage(Damage, EventInstigator, DamageCauser, DamageContext)
     local mineLevel = UGCAttributeSystem.GetGameAttributeValue(self, "MineLevel")
-    ugcprint("[矿石等级检查] 受害者MineLevel:", mineLevel)
     if not mineLevel or mineLevel <= 0 then
         return Damage
     end
     
     local axeLevel = MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
-    ugcprint("[矿石等级检查] 攻击者AxeLevel:", axeLevel)
     
     if axeLevel > 0 and axeLevel < mineLevel then
         ugcprint("[矿石等级检查] 等级不足！伤害设为0 (AxeLevel="..axeLevel..", MineLevel="..mineLevel..")")
@@ -83,6 +93,12 @@ end
 function Ruby_mine:BPDie(KillingDamage, EventInstigator,DamageCauser,DamageEvent,DamageTypeID)
     self.ShakeAmplitude = 0
     self.ShakeSpeed = 0
+    if MineZoneManager and UGCGameSystem.IsServer() then
+        local zoneId, oreKey = MineZoneManager.GetZoneIdByActor(self)
+        if zoneId and oreKey then
+            MineZoneManager.OnOreDestroyed(zoneId, oreKey, self)
+        end
+    end
     self.UGCPresetCommonDropItemComponent:StartDrop(self, EventInstigator, {})
 end
 

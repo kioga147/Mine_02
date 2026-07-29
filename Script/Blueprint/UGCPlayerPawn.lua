@@ -2,9 +2,8 @@
 --Edit Below--
 local UGCPlayerPawn = {}
 
-local HEAVY_WEIGHT_THRESHOLD = 100
 local NORMAL_SPEED_SCALE = 2.0
-local HEAVY_SPEED_SCALE = 1.0
+local MINE_CAR_SPEED_SCALE = 4.0
 
 local AXE_LEVEL_BY_CLASS = {
     ["copper_pickaxe"] = 1,
@@ -21,8 +20,6 @@ local AXE_LEVEL_BY_CLASS = {
     ["exdiamond_drill"] = 5,
     ["advanced_miningtruck"] = 5,
 }
-
-local MINE_CAR_SPEED_SCALE = 4.0
 
 local BP_BackpackComponentV2_Custom = nil
 local function GetBackpackComponent()
@@ -168,18 +165,30 @@ function UGCPlayerPawn:DoSetMineCarMode(bEnable)
             else
                 ugcprint("[矿车模式] ❌ 移除变身Buff失败:", tostring(Result))
             end
+            
+            local SkillPaths = {
+                "Asset/Blueprint/Prefabs/Skills/BasicVehicle.BasicVehicle_C"
+            }
+            for _, SkillPath in ipairs(SkillPaths) do
+                local FullPath = UGCGameSystem.GetUGCResourcesFullPath(SkillPath)
+                local SkillClass = UGCObjectUtility.LoadClass(FullPath)
+                if SkillClass then
+                    local ExistSkills = UGCPersistEffectSystem.GetSkillsByClass(self, SkillClass)
+                    if ExistSkills and #ExistSkills > 0 then
+                        for _, SkillInst in ipairs(ExistSkills) do
+                            if UE.IsValid(SkillInst) then
+                                UGCPersistEffectSystem.RemoveSkillInstance(self, SkillInst)
+                                ugcprint("[矿车模式] ✅ 已移除BasicVehicle技能实例")
+                            end
+                        end
+                    end
+                end
+            end
         end
         
         local BackpackComp = GetBackpackComponent()
-        if BackpackComp and BackpackComp.GetBackpackWeightInfo then
-            local backpackWeightInfo = BackpackComp.GetBackpackWeightInfo(self)
-            if backpackWeightInfo and backpackWeightInfo.CurrentWeight >= HEAVY_WEIGHT_THRESHOLD then
-                UGCAttributeSystem.SetGameAttributeValue(self, 
-                    UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, HEAVY_SPEED_SCALE)
-            else
-                UGCAttributeSystem.SetGameAttributeValue(self, 
-                    UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, NORMAL_SPEED_SCALE)
-            end
+        if BackpackComp and BackpackComp.UpdateWeightSpeed then
+            BackpackComp.UpdateWeightSpeed(self)
         end
         
         ugcprint("[矿车模式] ❌ 已退出矿车模式")
@@ -188,26 +197,6 @@ end
 
 function UGCPlayerPawn:IsMineCarMode()
     return self.bIsMineCarMode == true
-end
-
-function UGCPlayerPawn:UpdateSpeedByWeight()
-    if self.bIsMineCarMode then
-        return
-    end
-    
-    local BackpackComp = GetBackpackComponent()
-    if BackpackComp and BackpackComp.GetBackpackWeightInfo then
-        local backpackWeightInfo = BackpackComp.GetBackpackWeightInfo(self)
-        if backpackWeightInfo then
-            if backpackWeightInfo.CurrentWeight >= HEAVY_WEIGHT_THRESHOLD then
-                UGCAttributeSystem.SetGameAttributeValue(self, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, HEAVY_SPEED_SCALE)
-                ugcprint("[速度更新] 背包超重，速度降低至:", HEAVY_SPEED_SCALE)
-            else
-                UGCAttributeSystem.SetGameAttributeValue(self, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, NORMAL_SPEED_SCALE)
-                ugcprint("[速度更新] 背包负重正常，速度恢复至:", NORMAL_SPEED_SCALE)
-            end
-        end
-    end
 end
 
 function UGCPlayerPawn:ReceiveTick(DeltaTime)

@@ -27,6 +27,16 @@ do
     end
 end
 
+local MineZoneManager = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire("Script.GamePartCustom.MineZoneManager")
+    end)
+    if Ok and type(Mod) == "table" then
+        MineZoneManager = Mod
+    end
+end
+
 local OreRecycleConfig = nil
 do
     local Ok, Mod = pcall(function()
@@ -279,59 +289,64 @@ local function IsMineTeleportUnlocked(PC)
 end
 
 local function TeleportPawnTo(PC, X, Y, Z)
-    local Pawn = nil
-    if PC then
-        if PC.GetPlayerCharacterSafety then
-            local Ok, P = pcall(function()
-                return PC:GetPlayerCharacterSafety()
-            end)
-            if Ok then
-                Pawn = P
-            end
-        end
-        if Pawn == nil and PC.K2_GetPawn then
-            local Ok, P = pcall(function()
-                return PC:K2_GetPawn()
-            end)
-            if Ok then
-                Pawn = P
-            end
+    if PC == nil then
+        return false
+    end
+
+    local Ok = false
+
+    if UGCPlayerControllerSystem and UGCPlayerControllerSystem.TeleportTo then
+        Ok = pcall(function()
+            UGCPlayerControllerSystem.TeleportTo(PC, X, Y, Z)
+        end)
+        if Ok then
+            return true
         end
     end
+
+    local Pawn = nil
+    if PC.GetPlayerCharacterSafety then
+        local OkP, P = pcall(function()
+            return PC:GetPlayerCharacterSafety()
+        end)
+        if OkP then Pawn = P end
+    end
+    if Pawn == nil and PC.K2_GetPawn then
+        local OkP, P = pcall(function()
+            return PC:K2_GetPawn()
+        end)
+        if OkP then Pawn = P end
+    end
     if Pawn == nil and UGCGameSystem and UGCGameSystem.GetPlayerPawn then
-        local Ok, P = pcall(UGCGameSystem.GetPlayerPawn, PC)
-        if Ok then
-            Pawn = P
-        end
+        local OkP, P = pcall(UGCGameSystem.GetPlayerPawn, PC)
+        if OkP then Pawn = P end
     end
     if Pawn == nil then
         return false
     end
 
-    local Loc = { X = X, Y = Y, Z = Z }
-    if Vector and Vector.New then
-        Loc = Vector.New(X, Y, Z)
-    elseif FVector then
-        Loc = FVector(X, Y, Z)
-    end
+    local Loc = Vector and Vector.New(X, Y, Z) or (FVector and FVector(X, Y, Z) or { X = X, Y = Y, Z = Z })
 
-    local Ok = false
     if Pawn.K2_TeleportTo then
         Ok = pcall(function()
             Pawn:K2_TeleportTo(Loc, Pawn:K2_GetActorRotation())
         end)
+        if Ok then return true end
     end
     if not Ok and Pawn.K2_SetActorLocation then
         Ok = pcall(function()
             Pawn:K2_SetActorLocation(Loc, false, nil, true)
         end)
+        if Ok then return true end
     end
     if not Ok and Pawn.SetActorLocation then
         Ok = pcall(function()
             Pawn:SetActorLocation(Loc)
         end)
+        if Ok then return true end
     end
-    return Ok and true or false
+
+    return false
 end
 
 --- 与 WBP_JadeAppraisal 价值公式一致（仅服务端记账）
@@ -440,7 +455,9 @@ function UGCPlayerController:ReceiveBeginPlay()
 
     if UGCGameSystem.IsServer() then
         self:EnsureWarehouseInitialCapacity()
-        -- 开局发放铜镐（迁自 Mine_03，延后等 Pawn/背包就绪）
+        if MineZoneManager then
+            MineZoneManager.Initialize()
+        end
         self._InitialPickaxeRetry = 0
         UGCTimerUtility.CreateLuaTimer(INITIAL_PICKAXE_DELAY_SEC, function()
             if UGCObjectUtility.IsObjectValid(self) then
@@ -958,21 +975,21 @@ end
 
 function UGCPlayerController:Server_UnlockMineTeleport()
     if IsMineTeleportUnlocked(self) then
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportNotify", "传送大厅已解锁")
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportUnlocked")
+        InvokeClient(self, "Client_MineTeleportNotify", "传送大厅已解锁")
+        InvokeClient(self, "Client_MineTeleportUnlocked")
         return
     end
     if not TryRemoveGold(self, MINE_TELEPORT_UNLOCK_COST) then
-        UnrealNetwork.CallUnrealRPC(
-            self, self, "Client_MineTeleportNotify",
+        InvokeClient(
+            self, "Client_MineTeleportNotify",
             "金币不足，解锁需要 " .. tostring(MINE_TELEPORT_UNLOCK_COST)
         )
         return
     end
     self.bMineTeleportUnlocked = true
     ugcprint("[MineTeleport] 传送大厅已解锁")
-    UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportUnlocked")
-    UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportNotify", "解锁成功！可传送至各矿区")
+    InvokeClient(self, "Client_MineTeleportUnlocked")
+    InvokeClient(self, "Client_MineTeleportNotify", "解锁成功！可传送至各矿区")
 end
 
 function UGCPlayerController:Client_MineTeleportUnlocked()
@@ -987,39 +1004,87 @@ function UGCPlayerController:Server_TeleportToMineZone(ZoneId)
     ZoneId = math.floor(tonumber(ZoneId) or 0)
     local Zone = MineTeleportConfig.GetZone(ZoneId)
     if Zone == nil then
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportNotify", "无效矿区")
+        InvokeClient(self, "Client_MineTeleportNotify", "无效矿区")
         return
     end
     if not IsMineTeleportUnlocked(self) then
-        UnrealNetwork.CallUnrealRPC(
-            self, self, "Client_MineTeleportNotify",
+        InvokeClient(
+            self, "Client_MineTeleportNotify",
             "请先解锁传送大厅（" .. tostring(MINE_TELEPORT_UNLOCK_COST) .. " 金币）"
         )
         return
     end
     if GetGoldCount(self) < MINE_TELEPORT_COST then
-        UnrealNetwork.CallUnrealRPC(
-            self, self, "Client_MineTeleportNotify",
+        InvokeClient(
+            self, "Client_MineTeleportNotify",
             "金币不足，传送需要 " .. tostring(MINE_TELEPORT_COST)
         )
         return
     end
     if not TryRemoveGold(self, MINE_TELEPORT_COST) then
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportNotify", "扣费失败")
+        InvokeClient(self, "Client_MineTeleportNotify", "扣费失败")
         return
     end
-    local Ok = TeleportPawnTo(self, Zone.PadX, Zone.PadY, Zone.PadZ)
-    if not Ok then
-        UGCBackpackSystemV2.AddItemV2(self, GOLD_ITEM_ID, MINE_TELEPORT_COST)
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportNotify", "传送失败，已退回费用")
+
+    local zoneName = tostring(Zone.Name)
+    local px, py, pz = Zone.PadX or 0, Zone.PadY or 0, Zone.PadZ or 0
+
+    InvokeClient(self, "Client_SetCameraFade", true, 1.5, true)
+
+    UGCTimerUtility.CreateLuaTimer(0.5, function()
+        if not UGCObjectUtility.IsObjectValid(self) then
+            UGCBackpackSystemV2.AddItemV2(self, GOLD_ITEM_ID, MINE_TELEPORT_COST)
+            InvokeClient(self, "Client_MineTeleportNotify", "传送失败，已退回费用")
+            return
+        end
+
+        local Ok = TeleportPawnTo(self, px, py, pz)
+        if not Ok then
+            UGCBackpackSystemV2.AddItemV2(self, GOLD_ITEM_ID, MINE_TELEPORT_COST)
+            InvokeClient(self, "Client_MineTeleportNotify", "传送失败，已退回费用")
+            InvokeClient(self, "Client_SetCameraFade", false, 0, false)
+            ugcprint(string.format("[MineTeleport] ❌ 传送失败: %s (%.0f,%.0f,%.0f)", zoneName, px, py, pz))
+            return
+        end
+
+        ugcprint(string.format("[MineTeleport] ✅ %s (%d) @ (%.0f,%.0f,%.0f)", zoneName, ZoneId, px, py, pz))
+
+        InvokeClient(self, "Client_MineTeleported", ZoneId)
+        InvokeClient(self, "Client_MineTeleportNotify", "已传送至「" .. zoneName .. "」")
+
+        UGCTimerUtility.CreateLuaTimer(0.3, function()
+            if UGCObjectUtility.IsObjectValid(self) then
+                InvokeClient(self, "Client_SetCameraFade", false, 1.5, false)
+            end
+        end, false)
+    end, false)
+end
+
+function UGCPlayerController:Client_SetCameraFade(bFadeOut, Duration, bFadeAudio)
+    bFadeOut = bFadeOut == true
+    Duration = tonumber(Duration) or 1.5
+    bFadeAudio = bFadeAudio == true
+
+    if not self.PlayerCameraManager then
         return
     end
-    ugcprint("[MineTeleport] 传送至 " .. tostring(Zone.Name) .. " (" .. tostring(ZoneId) .. ")")
-    UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleported", ZoneId)
-    UnrealNetwork.CallUnrealRPC(
-        self, self, "Client_MineTeleportNotify",
-        "已传送至「" .. tostring(Zone.Name) .. "」"
-    )
+
+    local BlackColor = LinearColor.New(0, 0, 0, 1)
+    local WhiteColor = LinearColor.New(1, 1, 1, 1)
+
+    if bFadeOut then
+        if self.PlayerCameraManager.StartCameraFade then
+            pcall(function()
+                self.PlayerCameraManager:StartCameraFade(0, 1, Duration, BlackColor, bFadeAudio, true)
+            end)
+        end
+    else
+        if self.PlayerCameraManager.StartCameraFade then
+            pcall(function()
+                self.PlayerCameraManager:StartCameraFade(1, 0, Duration, WhiteColor, false, false)
+            end)
+        end
+    end
 end
 
 function UGCPlayerController:Client_MineTeleported(ZoneId)
@@ -1030,11 +1095,11 @@ function UGCPlayerController:Client_MineTeleported(ZoneId)
 end
 
 function UGCPlayerController:RequestUnlockMineTeleport()
-    UnrealNetwork.CallUnrealRPC(self, self, "Server_UnlockMineTeleport")
+    InvokeServer(self, "Server_UnlockMineTeleport")
 end
 
 function UGCPlayerController:RequestTeleportToMineZone(ZoneId)
-    UnrealNetwork.CallUnrealRPC(self, self, "Server_TeleportToMineZone", ZoneId)
+    InvokeServer(self, "Server_TeleportToMineZone", ZoneId)
 end
 
 --- ========== 矿石加工厂 / 冶炼 ==========

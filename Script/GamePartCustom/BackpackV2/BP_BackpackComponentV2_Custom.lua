@@ -3,6 +3,26 @@
 local BP_BackpackComponentV2_Custom = {} 
 
 local MAX_WEIGHT_CAPACITY = 100
+local NORMAL_SPEED_SCALE = 2.0
+
+local ITEM_WEIGHT_TABLE = {
+    [8310000] = 1,
+    [8310003] = 2,
+    [8310004] = 3,
+    [8310005] = 4,
+    [8310006] = 5,
+    [8310007] = 6,
+    [8310008] = 7,
+    [8310009] = 8,
+    [8310010] = 9,
+    [8310011] = 10,
+    [8310012] = 1,
+    [8310013] = 1,
+    [8310014] = 1,
+    [8310015] = 1,
+    [8310016] = 1,
+    [8310017] = 1,
+}
 
 local BACKPACK_LEVEL_CONFIG = {
     [1] = { Capacity = 10, Cost = 0 },
@@ -24,8 +44,6 @@ local function CheckAutoUpgrade(Player)
     local maxCapacity = UGCBackpackSystemV2.GetMaxCellCapacity(Player)
     local playerCoins = UGCBackpackSystemV2.GetItemCountV2(Player, COIN_ITEM_ID)
     
-    ugcprint("[背包升级] 自动检测 - 当前已解锁容量:", currentCapacity, "上限:", maxCapacity, "金币:", playerCoins)
-    
     for level = 1, 9 do
         local currentConfig = BACKPACK_LEVEL_CONFIG[level]
         local nextConfig = BACKPACK_LEVEL_CONFIG[level + 1]
@@ -36,13 +54,10 @@ local function CheckAutoUpgrade(Player)
                     local capacityIncrease = nextConfig.Capacity - currentConfig.Capacity
                     UGCBackpackSystemV2.RemoveItemV2(Player, COIN_ITEM_ID, nextConfig.Cost)
                     UGCBackpackSystemV2.AddCellCapacity(Player, capacityIncrease)
-                    ugcprint("[背包升级] ✅ 自动升级成功！等级:", level, "->", level + 1, "容量:", currentConfig.Capacity, "->", nextConfig.Capacity, "消耗金币:", nextConfig.Cost)
+                    ugcprint(string.format("[背包升级] %d→%d (容量%d→%d) 消耗%d金币",
+                        level, level + 1, currentConfig.Capacity, nextConfig.Capacity, nextConfig.Cost))
                     return true
-                else
-                    ugcprint("[背包升级] 容量上限不足，需要增加最大容量")
                 end
-            else
-                ugcprint("[背包升级] 金币不足，升级需要:", nextConfig.Cost, "当前:", playerCoins)
             end
             break
         end
@@ -52,59 +67,61 @@ local function CheckAutoUpgrade(Player)
 end
 
 local function GetItemWeight(DefineID)
-    local weight = 1
-    ugcprint("[背包负重] GetItemWeight 开始 - DefineID:", DefineID)
-    
     if DefineID and DefineID.TypeSpecificID then
         local itemID = DefineID.TypeSpecificID
-        ugcprint("[背包负重] 物品ID:", itemID)
-        
-        local itemHandle = UGCItemSystemV2.GetConfigItemHandle(itemID)
-        if itemHandle then
-            ugcprint("[背包负重] itemHandle存在")
-            if itemHandle.UnitWeightConfig then
-                weight = itemHandle.UnitWeightConfig
-                ugcprint("[背包负重] 读取UnitWeightConfig成功:", weight)
-            else
-                ugcprint("[背包负重] itemHandle无UnitWeightConfig属性，使用默认值1")
-            end
-        else
-            ugcprint("[背包负重] itemHandle不存在，使用默认值1")
+        if ITEM_WEIGHT_TABLE[itemID] then
+            return ITEM_WEIGHT_TABLE[itemID]
         end
-    else
-        ugcprint("[背包负重] DefineID无效，使用默认值1")
     end
-    
-    ugcprint("[背包负重] GetItemWeight 结束 - 重量:", weight)
-    return tonumber(weight) or 1
+    return 1
 end
 
 local function GetCurrentTotalWeight(Player)
     local totalWeight = 0
-    ugcprint("[背包负重] GetCurrentTotalWeight 开始 - Player:", Player)
-    
-    local allItemDefineIDs = UGCBackpackSystemV2.GetAllItemDefineIDsV2(Player)
-    if allItemDefineIDs then
-        ugcprint("[背包负重] 获取物品列表成功，数量:", #allItemDefineIDs)
-        for _, defineID in ipairs(allItemDefineIDs) do
-            local count = UGCBackpackSystemV2.GetItemCountByDefineIDV2(Player, defineID)
-            local weight = GetItemWeight(defineID)
-            ugcprint("[背包负重] 物品:", defineID, "数量:", count, "单重:", weight, "小计:", count * weight)
+    for itemID, weight in pairs(ITEM_WEIGHT_TABLE) do
+        local count = UGCBackpackSystemV2.GetItemCountV2(Player, itemID) or 0
+        if count > 0 then
             totalWeight = totalWeight + weight * count
         end
-    else
-        ugcprint("[背包负重] 获取物品列表失败或为空")
     end
-    
-    ugcprint("[背包负重] GetCurrentTotalWeight 结束 - 当前总重量:", totalWeight, "kg")
     return totalWeight
 end
 
 local function GetRemainingWeight(Player)
-    local currentWeight = GetCurrentTotalWeight(Player)
-    local remaining = MAX_WEIGHT_CAPACITY - currentWeight
-    ugcprint("[背包负重] 剩余负重:", remaining, "kg")
-    return remaining
+    return MAX_WEIGHT_CAPACITY - GetCurrentTotalWeight(Player)
+end
+
+local function _GetPlayerPawn(Player)
+    if Player == nil then return nil end
+    if UGCGameSystem and UGCGameSystem.GetPlayerPawnByPlayerController then
+        local Ok, Pawn = pcall(UGCGameSystem.GetPlayerPawnByPlayerController, Player)
+        if Ok and Pawn then return Pawn end
+    end
+    if Player.GetPawn then
+        local Ok, Pawn = pcall(Player.GetPawn, Player)
+        if Ok and Pawn then return Pawn end
+    end
+    if Player.Pawn then
+        return Player.Pawn
+    end
+    return Player
+end
+
+local function _UpdateWeightSpeed(Player)
+    if Player == nil then return end
+    local curWeight = GetCurrentTotalWeight(Player)
+    local ratio = math.min(curWeight / MAX_WEIGHT_CAPACITY, 1.0)
+    local speedScale = NORMAL_SPEED_SCALE * (1.0 - ratio * 0.5)
+    local Pawn = _GetPlayerPawn(Player)
+    ugcprint(string.format("[移速] 负重计算: 当前%.0fkg / 最大%dkg → 速度x%.2f (OwnerType=%s, PawnType=%s)",
+        curWeight, MAX_WEIGHT_CAPACITY, speedScale,
+        Player.GetClass and Player:GetClass() or "?",
+        Pawn and Pawn.GetClass and Pawn:GetClass() or "?"))
+    UGCAttributeSystem.SetGameAttributeValue(Pawn, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, speedScale)
+end
+
+function BP_BackpackComponentV2_Custom.UpdateWeightSpeed(Player)
+    _UpdateWeightSpeed(Player)
 end
 
 function BP_BackpackComponentV2_Custom.GetBackpackWeightInfo(Player)
@@ -141,7 +158,10 @@ function BP_BackpackComponentV2_Custom:InitEventAfterPlayerEnter()
     end
     local Need = Initial - Cap
     local Ok = pcall(UGCBackpackSystemV2.AddWarehouseCellCapacity, Player, Need)
-    ugcprint("[仓库] InitEvent 初始容量", Cap, "->", Cap + Need, "ok=", Ok)
+    if Ok then
+        ugcprint(string.format("[仓库] 初始容量 %d→%d", Cap, Cap + Need))
+    end
+    _UpdateWeightSpeed(Player)
 end
 
 ---func 能否添加物品进背包(服务端调用)
@@ -149,30 +169,18 @@ end
 ---@param Count number 物品数量
 ---@return number 允许添加物品数量
 function BP_BackpackComponentV2_Custom:CanAddItemV2(ItemID, Count)
-    ugcprint("[背包负重] ====== CanAddItemV2 ======")
-    ugcprint("[背包负重] ItemID:", ItemID, "Count:", Count)
-    
+    local slotAllowed = BP_BackpackComponentV2_Custom.SuperClass.CanAddItemV2(self, ItemID, Count)
+    if slotAllowed <= 0 then
+        return 0
+    end
     local Player = self:GetOwner()
     local remainingWeight = GetRemainingWeight(Player)
-    ugcprint("[背包负重] 剩余负重:", remainingWeight, "kg")
-    
-    local itemWeight = 1
-    local itemHandle = UGCItemSystemV2.GetConfigItemHandle(ItemID)
-    if itemHandle and itemHandle.UnitWeightConfig then
-        itemWeight = itemHandle.UnitWeightConfig
+    if remainingWeight <= 0 then
+        return 0
     end
-    ugcprint("[背包负重] 物品单重:", itemWeight, "kg")
-    
-    local maxCount = math.floor(remainingWeight / itemWeight)
-    local result = math.min(Count, maxCount)
-    ugcprint("[背包负重] 允许添加数量:", result)
-    
-    if result < Count then
-        ugcprint("[背包负重] ⚠️ 超重警告！无法添加全部物品，已限制数量")
-    end
-    
-    ugcprint("[背包负重] ===========================")
-    return result
+    local itemWeight = ITEM_WEIGHT_TABLE[ItemID] or 1
+    local maxByWeight = math.floor(remainingWeight / itemWeight)
+    return math.min(slotAllowed, maxByWeight)
 end
 
 ---func 能否添加物品进背包(服务端调用)
@@ -180,57 +188,28 @@ end
 ---@param Count number 物品数量
 ---@return number 允许添加物品数量
 function BP_BackpackComponentV2_Custom:CanAddItemByDefineIDV2(DefineID, Count)
-    ugcprint("[背包负重] ====== CanAddItemByDefineIDV2 ======")
-    ugcprint("[背包负重] DefineID:", DefineID, "Count:", Count)
-    
+    local slotAllowed = BP_BackpackComponentV2_Custom.SuperClass.CanAddItemByDefineIDV2(self, DefineID, Count)
+    if slotAllowed <= 0 then
+        return 0
+    end
     local Player = self:GetOwner()
     local remainingWeight = GetRemainingWeight(Player)
-    ugcprint("[背包负重] 剩余负重:", remainingWeight, "kg")
-    
-    local itemWeight = GetItemWeight(DefineID)
-    ugcprint("[背包负重] 物品单重:", itemWeight, "kg")
-    
-    local maxCount = math.floor(remainingWeight / itemWeight)
-    local result = math.min(Count, maxCount)
-    ugcprint("[背包负重] 允许添加数量:", result)
-    
-    if result < Count then
-        ugcprint("[背包负重] ⚠️ 超重警告！无法添加全部物品，已限制数量")
+    if remainingWeight <= 0 then
+        return 0
     end
-    
-    ugcprint("[背包负重] =======================================")
-    return result
+    local itemWeight = GetItemWeight(DefineID)
+    local maxByWeight = math.floor(remainingWeight / itemWeight)
+    return math.min(slotAllowed, maxByWeight)
 end
 
 ---func 当背包添加物品后回调(服务端调用)
 ---@param DefineID userdata 物品DefineID
 ---@param Count number 物品数量
 function BP_BackpackComponentV2_Custom:OnAddItemV2(DefineID, Count)
-    ugcprint("[背包负重] ====== 物品添加成功 ======")
-    ugcprint("[背包负重] DefineID:", DefineID, "Count:", Count)
-    
     BP_BackpackComponentV2_Custom.SuperClass.OnAddItemV2(self, DefineID, Count)
-    
     local Player = self:GetOwner()
-    local currentWeight = GetCurrentTotalWeight(Player)
-    
-    ugcprint("[背包负重] 当前背包重量:", currentWeight, "kg /", MAX_WEIGHT_CAPACITY, "kg")
-    
-    if currentWeight >= MAX_WEIGHT_CAPACITY then
-        ugcprint("[背包负重] ❌❌❌ 背包已超重！移动速度将降低！")
-    elseif currentWeight >= MAX_WEIGHT_CAPACITY * 0.8 then
-        ugcprint("[背包负重] ⚠️ 背包接近负重上限！")
-    else
-        ugcprint("[背包负重] ✅ 背包负重正常")
-    end
-    
-    ugcprint("[背包负重] =======================")
-    
     CheckAutoUpgrade(Player)
-    
-    if Player and Player.UpdateSpeedByWeight then
-        Player:UpdateSpeedByWeight()
-    end
+    _UpdateWeightSpeed(Player)
 end
 
 ---func 能否合并物品(新添加物品能否与已有格子物品堆叠, 格子物品即物品实例)(服务端调用)
@@ -247,23 +226,10 @@ end
 ---@param OldCount number 合并前格子的物品数量
 ---@param MergeCount number 合并到该格子的新物品数量
 function BP_BackpackComponentV2_Custom:OnMergeItemV2(ItemDefineID, OldCount, MergeCount)
-    ugcprint("[背包负重] ====== 物品合并 ======")
-    ugcprint("[背包负重] ItemDefineID:", ItemDefineID, "OldCount:", OldCount, "MergeCount:", MergeCount)
-    
     BP_BackpackComponentV2_Custom.SuperClass.OnMergeItemV2(self, ItemDefineID, OldCount, MergeCount)
-    
     local Player = self:GetOwner()
-    local currentWeight = GetCurrentTotalWeight(Player)
-    
-    ugcprint("[背包负重] 当前背包重量:", currentWeight, "kg /", MAX_WEIGHT_CAPACITY, "kg")
-    
-    if currentWeight >= MAX_WEIGHT_CAPACITY then
-        ugcprint("[背包负重] ❌❌❌ 背包已超重！移动速度将降低！")
-    end
-    
-    ugcprint("[背包负重] =======================")
-    
     CheckAutoUpgrade(Player)
+    _UpdateWeightSpeed(Player)
 end
 
 ---func 能否移除物品(服务端调用)
@@ -278,25 +244,8 @@ end
 ---@param ItemDefineID userdata 物品DefineID，移除后可能不存在于背包
 ---@param Count number 已移除的物品数量
 function BP_BackpackComponentV2_Custom:OnRemoveItemV2(ItemDefineID, Count)
-    ugcprint("[背包负重] ====== 物品移除 ======")
-    ugcprint("[背包负重] ItemDefineID:", ItemDefineID, "Count:", Count)
-    
     BP_BackpackComponentV2_Custom.SuperClass.OnRemoveItemV2(self, ItemDefineID, Count)
-    
-    local Player = self:GetOwner()
-    local currentWeight = GetCurrentTotalWeight(Player)
-    
-    ugcprint("[背包负重] 当前背包重量:", currentWeight, "kg /", MAX_WEIGHT_CAPACITY, "kg")
-    
-    if currentWeight < MAX_WEIGHT_CAPACITY then
-        ugcprint("[背包负重] ✅ 背包负重正常")
-    end
-    
-    ugcprint("[背包负重] =======================")
-    
-    if Player and Player.UpdateSpeedByWeight then
-        Player:UpdateSpeedByWeight()
-    end
+    _UpdateWeightSpeed(self:GetOwner())
 end
 
 ---func 能否丢弃物品(服务端调用)
@@ -311,25 +260,8 @@ end
 ---@param ItemDefineID userdata 物品DefineID，丢弃后物品可能不存在于背包
 ---@param Count number 已丢弃的物品数量
 function BP_BackpackComponentV2_Custom:OnDropItemV2(ItemDefineID, Count)
-    ugcprint("[背包负重] ====== 物品丢弃 ======")
-    ugcprint("[背包负重] ItemDefineID:", ItemDefineID, "Count:", Count)
-    
     BP_BackpackComponentV2_Custom.SuperClass.OnDropItemV2(self, ItemDefineID, Count)
-    
-    local Player = self:GetOwner()
-    local currentWeight = GetCurrentTotalWeight(Player)
-    
-    ugcprint("[背包负重] 当前背包重量:", currentWeight, "kg /", MAX_WEIGHT_CAPACITY, "kg")
-    
-    if currentWeight < MAX_WEIGHT_CAPACITY then
-        ugcprint("[背包负重] ✅ 背包负重正常")
-    end
-    
-    ugcprint("[背包负重] =======================")
-    
-    if Player and Player.UpdateSpeedByWeight then
-        Player:UpdateSpeedByWeight()
-    end
+    _UpdateWeightSpeed(self:GetOwner())
 end
 
 ---func 能否使用物品(服务端调用)
@@ -343,6 +275,7 @@ end
 ---@param ItemDefineID userdata 物品DefineID
 function BP_BackpackComponentV2_Custom:OnUseItemV2(ItemDefineID)
     BP_BackpackComponentV2_Custom.SuperClass.OnUseItemV2(self, ItemDefineID)
+    _UpdateWeightSpeed(self:GetOwner())
 end
 
 ---func 取消使用物品后回调(服务端调用) 装备/投掷物 取消使用/卸下。 注：药品不会触发此回调

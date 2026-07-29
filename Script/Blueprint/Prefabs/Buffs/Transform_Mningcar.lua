@@ -163,6 +163,7 @@ function Transform_Mningcar:ReapplyCurrentWeaponSkills()
             local Skill = UGCPersistEffectSystem.AddSkillByClass(PlayerPawn, SkillClass, -1)
             if Skill then
                 ugcprint("[矿车变身] ✅ 成功添加BasicVehicle技能")
+                table.insert(self.CachedAppliedSkill, Skill)
                 
                 if Skill.OnApply_BP then
                     pcall(Skill.OnApply_BP, Skill)
@@ -176,6 +177,16 @@ function Transform_Mningcar:ReapplyCurrentWeaponSkills()
             local Skill = ExistSkills[1]
             if Skill then
                 ugcprint("[矿车变身] 技能状态 IsActive:", tostring(Skill.IsActive))
+                local bAlreadyCached = false
+                for _, CachedSkill in ipairs(self.CachedAppliedSkill or {}) do
+                    if CachedSkill == Skill then
+                        bAlreadyCached = true
+                        break
+                    end
+                end
+                if not bAlreadyCached then
+                    table.insert(self.CachedAppliedSkill, Skill)
+                end
             end
         end
     else

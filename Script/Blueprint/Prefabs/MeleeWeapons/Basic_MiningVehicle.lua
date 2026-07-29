@@ -190,6 +190,27 @@ function Basic_MiningVehicle:ReceiveEndPlay()
     local PlayerPawn = GetPlayerPawnFromWeapon(self)
     
     if PlayerPawn and PlayerPawn.SetMineCarMode then
+        if UGCPersistEffectSystem then
+            local SkillPaths = {
+                "Asset/Blueprint/Prefabs/Skills/BasicVehicle.BasicVehicle_C"
+            }
+            for _, SkillPath in ipairs(SkillPaths) do
+                local FullPath = UGCGameSystem.GetUGCResourcesFullPath(SkillPath)
+                local SkillClass = UGCObjectUtility.LoadClass(FullPath)
+                if SkillClass then
+                    local ExistSkills = UGCPersistEffectSystem.GetSkillsByClass(PlayerPawn, SkillClass)
+                    if ExistSkills and #ExistSkills > 0 then
+                        for _, SkillInst in ipairs(ExistSkills) do
+                            if UE.IsValid(SkillInst) then
+                                UGCPersistEffectSystem.RemoveSkillInstance(PlayerPawn, SkillInst)
+                                ugcprint("[矿车武器] ✅ 已移除BasicVehicle技能实例")
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        
         PlayerPawn:SetMineCarMode(false)
         ugcprint("[矿车武器] ✅ 成功取消矿车模式")
     else

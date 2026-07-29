@@ -54,13 +54,90 @@ local function IsVehicleBroken(PlayerPawn)
     local StatusOk, Status = pcall(function()
         return PC:GetVehicleRepairStatus(VEHICLE_REPAIR_ID)
     end)
-    return StatusOk and type(Status) == "table" and Status.bBroken == true
+    return StatusOk and type(Status) == "table" and (Status.bBroken == true or Status.bPendingCheck == true)
+end
+
+local function StopMineCarVisual(PlayerPawn)
+    if PlayerPawn == nil then
+        return
+    end
+    if PlayerPawn.DoSetMineCarMode then
+        PlayerPawn:DoSetMineCarMode(false)
+    elseif PlayerPawn.SetMineCarMode then
+        PlayerPawn:SetMineCarMode(false)
+    end
+end
+
+local function GetControllerFromPawn(PlayerPawn)
+    if PlayerPawn == nil or PlayerPawn.GetController == nil then
+        return nil
+    end
+    local Ok, PC = pcall(function()
+        return PlayerPawn:GetController()
+    end)
+    if Ok then
+        return PC
+    end
+    return nil
+end
+
+local function RequestBeginTrip(PlayerPawn)
+    local PC = GetControllerFromPawn(PlayerPawn)
+    if PC == nil then
+        return
+    end
+    if UGCGameSystem.IsServer() and PC.Server_BeginMineCarTrip then
+        PC:Server_BeginMineCarTrip(VEHICLE_REPAIR_ID)
+    elseif PC.RequestBeginMineCarTrip then
+        PC:RequestBeginMineCarTrip(VEHICLE_REPAIR_ID)
+    end
+end
+
+local function RequestEndTrip(PlayerPawn)
+    local PC = GetControllerFromPawn(PlayerPawn)
+    if PC == nil then
+        return
+    end
+    if UGCGameSystem.IsServer() and PC.Server_EndMineCarTrip then
+        PC:Server_EndMineCarTrip(VEHICLE_REPAIR_ID)
+    elseif PC.RequestEndMineCarTrip then
+        PC:RequestEndMineCarTrip(VEHICLE_REPAIR_ID)
+    end
+end
+
+local function IsCurrentWeaponMineCar(PlayerPawn)
+    if PlayerPawn == nil or UGCWeaponManagerSystem == nil or UGCWeaponManagerSystem.GetCurrentWeapon == nil then
+        return false
+    end
+    local Ok, Weapon = pcall(UGCWeaponManagerSystem.GetCurrentWeapon, PlayerPawn)
+    if not Ok or Weapon == nil then
+        return false
+    end
+    local Name = ""
+    if Weapon.GetName then
+        local NameOk, Result = pcall(function()
+            return Weapon:GetName()
+        end)
+        if NameOk and Result ~= nil then
+            Name = tostring(Result)
+        end
+    end
+    return string.find(Name, "MiningVehicle") ~= nil or string.find(Name, "MiningTruck") ~= nil
 end
 
 function Intermediate_MiningTruck:ReceiveBeginPlay()
     Intermediate_MiningTruck.SuperClass.ReceiveBeginPlay(self)
     
     local PlayerPawn = GetPlayerPawnFromWeapon(self)
+    if PlayerPawn then
+        if IsVehicleBroken(PlayerPawn) then
+            StopMineCarVisual(PlayerPawn)
+            ugcprint("[MineCarTrip] intermediate vehicle blocked by repair state")
+            return
+        end
+        RequestBeginTrip(PlayerPawn)
+        return
+    end
     
     if PlayerPawn and PlayerPawn.SetMineCarMode then
         if IsVehicleBroken(PlayerPawn) then
@@ -105,18 +182,13 @@ function Intermediate_MiningTruck:AddMineCarSkill(PlayerPawn)
         
         if #ExistSkills == 0 then
             local Skill = UGCPersistEffectSystem.AddSkillByClass(PlayerPawn, SkillClass, -1)
-            if Skill then
-                if Skill.OnApply_BP then
-                    pcall(Skill.OnApply_BP, Skill)
-                end
-                if Skill.Activate then
-                    pcall(Skill.Activate, Skill)
-                end
+            if not Skill then
+                ugcprint("[矿车武器] 中级采矿车添加技能失败")
             end
         else
             local Skill = ExistSkills[1]
-            if Skill and Skill.OnApply_BP then
-                pcall(Skill.OnApply_BP, Skill)
+            if Skill then
+                ugcprint("[矿车武器] 中级采矿车技能已存在")
             end
         end
     end
@@ -126,6 +198,22 @@ function Intermediate_MiningTruck:ReceiveEndPlay()
     Intermediate_MiningTruck.SuperClass.ReceiveEndPlay(self) 
     
     local PlayerPawn = GetPlayerPawnFromWeapon(self)
+    if PlayerPawn then
+        local function EndTripIfSwitchedAway()
+            if PlayerPawn.IsMineCarMode and PlayerPawn:IsMineCarMode() and not IsCurrentWeaponMineCar(PlayerPawn) then
+                ugcprint("[MineCarTrip] intermediate weapon EndPlay confirmed switch away; ending trip")
+                RequestEndTrip(PlayerPawn)
+            else
+                ugcprint("[MineCarTrip] intermediate weapon EndPlay kept trip; current weapon is still mine car")
+            end
+        end
+        if UGCTimerUtility and UGCTimerUtility.CreateLuaTimer then
+            UGCTimerUtility.CreateLuaTimer(0.3, EndTripIfSwitchedAway, false)
+        else
+            EndTripIfSwitchedAway()
+        end
+        return
+    end
     
     if PlayerPawn and PlayerPawn.SetMineCarMode then
         PlayerPawn:SetMineCarMode(false)

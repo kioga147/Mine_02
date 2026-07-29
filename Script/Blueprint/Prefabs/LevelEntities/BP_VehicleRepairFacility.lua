@@ -62,6 +62,27 @@ local function IsLocalPlayerPawn(OtherActor)
     return LocalPawn ~= nil and LocalPawn == OtherActor
 end
 
+local function IsLocalPlayerMineCarMode()
+    local LocalPawn = UGCGameSystem.GetLocalPlayerPawn()
+    if LocalPawn ~= nil and LocalPawn.IsMineCarMode then
+        local Ok, Result = pcall(function()
+            return LocalPawn:IsMineCarMode()
+        end)
+        if Ok and Result == true then
+            return true
+        end
+    end
+    local PC = UGCGameSystem.GetLocalPlayerController()
+    if PC ~= nil and type(PC.ClientVehicleRepairStateMap) == "table" then
+        for _, State in pairs(PC.ClientVehicleRepairStateMap) do
+            if math.floor(tonumber(State) or 0) == 1 then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 local function GetLocalPC()
     return UGCGameSystem.GetLocalPlayerController()
 end
@@ -164,7 +185,7 @@ end
 
 function BP_VehicleRepairFacility:OnTriggerBeginOverlap(
     OverlappedComponent, OtherActor, OtherComp, OtherBodyIndex, bFromSweep, SweepResult)
-    if not IsLocalPlayerPawn(OtherActor) or self.bLocalPlayerInside then
+    if not IsLocalPlayerPawn(OtherActor) or self.bLocalPlayerInside or IsLocalPlayerMineCarMode() then
         return
     end
     self.bLocalPlayerInside = true
@@ -224,6 +245,10 @@ function BP_VehicleRepairFacility:StartRefreshTimer()
     local Ok, Handle = pcall(function()
         return UGCTimerUtility.CreateLuaTimer(1.0, function()
             if Facility.bLocalPlayerInside and Facility.PromptWidget ~= nil then
+                if IsLocalPlayerMineCarMode() then
+                    Facility:HidePrompt()
+                    return
+                end
                 Facility:RefreshPromptUI()
             end
         end, true)
@@ -268,6 +293,9 @@ function BP_VehicleRepairFacility:GetStatus()
         RangeText = Vehicle.RangeText or "",
         MineLevel = Vehicle.MineLevel or 0,
         OwnedCount = 0,
+        VehicleState = 0,
+        bActive = false,
+        bPendingCheck = false,
         bBroken = false,
         LastMsg = PC and PC.VehicleRepairLastMsg or "",
     }
@@ -287,6 +315,16 @@ function BP_VehicleRepairFacility:ApplyLabels(Widget, Status)
         MainTxt = string.format("维修%s (%d金)", VehicleName, tonumber(Status.RepairCost) or 1000)
     else
         MainTxt = "返程检查"
+    end
+
+    if Status.bUnlocked == true and Status.bBroken ~= true then
+        if Status.bPendingCheck == true then
+            MainTxt = "返程检查"
+        elseif Status.bActive == true then
+            MainTxt = "车辆使用中"
+        else
+            MainTxt = "状态良好"
+        end
     end
 
     SetText(GetW(Widget, "Txt_Unlock"), MainTxt)
@@ -329,6 +367,9 @@ function BP_VehicleRepairFacility:RefreshPromptUI()
     elseif Status.bBroken == true then
         CanMain = (tonumber(Status.GoldCount) or 0) >= (tonumber(Status.RepairCost) or 1000)
     end
+    if Status.bUnlocked == true and Status.bBroken ~= true and Status.bPendingCheck ~= true then
+        CanMain = false
+    end
 
     SetEnabled(GetW(Widget, "Btn_Unlock"), CanMain)
     SetEnabled(GetW(Widget, "Btn_Quick"), Status.bUnlocked == true)
@@ -336,6 +377,15 @@ function BP_VehicleRepairFacility:RefreshPromptUI()
     self:ApplyLabels(Widget, Status)
 
     local StateText = Status.bBroken == true and "已损坏" or "状态良好"
+    if Status.bBroken == true then
+        StateText = "已损坏"
+    elseif Status.bPendingCheck == true then
+        StateText = "待返程检查"
+    elseif Status.bActive == true then
+        StateText = "使用中"
+    else
+        StateText = "可使用"
+    end
     local Line
     if Status.bUnlocked ~= true then
         Line = string.format("采矿车维修处 · 解锁 %d 金币（当前 %d）", tonumber(Status.UnlockCost) or 5000, tonumber(Status.GoldCount) or 0)
@@ -356,6 +406,11 @@ function BP_VehicleRepairFacility:RefreshPromptUI()
 end
 
 function BP_VehicleRepairFacility:ShowPrompt()
+    if IsLocalPlayerMineCarMode() then
+        self:HidePrompt()
+        return
+    end
+
     if self.PromptWidget ~= nil or self.bPromptOpening then
         if self.PromptWidget then
             self:RefreshPromptUI()
@@ -372,7 +427,7 @@ function BP_VehicleRepairFacility:ShowPrompt()
             ugcprint("[VehicleRepair] 提示 UI 创建失败")
             return
         end
-        if not self.bLocalPlayerInside then
+        if not self.bLocalPlayerInside or IsLocalPlayerMineCarMode() then
             if Widget.RemoveFromParent then
                 pcall(function()
                     Widget:RemoveFromParent()
@@ -464,12 +519,14 @@ function BP_VehicleRepairFacility:OnMainClicked()
         else
             UnrealNetwork.CallUnrealRPC(PC, PC, "Server_RepairMiningVehicle", self.SelectedVehicleId)
         end
-    else
+    elseif Status.bPendingCheck == true then
         if PC.RequestCheckVehicleReturn then
             PC:RequestCheckVehicleReturn(self.SelectedVehicleId)
         else
             UnrealNetwork.CallUnrealRPC(PC, PC, "Server_CheckVehicleReturn", self.SelectedVehicleId)
         end
+    else
+        self:RefreshPromptUI()
     end
 end
 

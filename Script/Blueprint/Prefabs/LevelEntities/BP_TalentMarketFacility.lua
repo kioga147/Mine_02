@@ -72,7 +72,17 @@ local function IsLocalPlayerMineCarMode()
         local Ok, Result = pcall(function()
             return LocalPawn:IsMineCarMode()
         end)
-        return Ok and Result == true
+        if Ok and Result == true then
+            return true
+        end
+    end
+    local PC = UGCGameSystem.GetLocalPlayerController()
+    if PC ~= nil and type(PC.ClientVehicleRepairStateMap) == "table" then
+        for _, State in pairs(PC.ClientVehicleRepairStateMap) do
+            if math.floor(tonumber(State) or 0) == 1 then
+                return true
+            end
+        end
     end
     return false
 end

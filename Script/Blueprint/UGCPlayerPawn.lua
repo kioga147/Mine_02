@@ -67,10 +67,11 @@ local function LoadMineCarSkillClass(SkillPath)
 end
 
 local function ClearMineCarSkills(Actor)
-    if not IsServerRuntime() or Actor == nil or UGCPersistEffectSystem == nil then
+    if Actor == nil or UGCPersistEffectSystem == nil then
         return
     end
 
+    local bServer = IsServerRuntime()
     for _, SkillPath in ipairs(MINE_CAR_SKILL_PATHS) do
         local SkillClass = LoadMineCarSkillClass(SkillPath)
         local Ok, Skills = pcall(UGCPersistEffectSystem.GetSkillsByClass, Actor, SkillClass)
@@ -78,12 +79,18 @@ local function ClearMineCarSkills(Actor)
             for _, Skill in ipairs(Skills) do
                 if Skill then
                     local Removed = false
-                    if UGCPersistEffectSystem.RemoveSkillInstance then
+                    if bServer and UGCPersistEffectSystem.RemoveSkillInstance then
                         local RemoveOk = pcall(UGCPersistEffectSystem.RemoveSkillInstance, Actor, Skill)
                         Removed = RemoveOk
                     end
-                    if not Removed and Skill.Cancel then
+                    if bServer and not Removed and Skill.Cancel then
                         pcall(Skill.Cancel, Skill, EPersistEffectUnApplyReason.Normal)
+                    end
+                    if not bServer and Skill.ParticleSystemComponent then
+                        pcall(function()
+                            Skill.ParticleSystemComponent:K2_DestroyComponent()
+                            Skill.ParticleSystemComponent = nil
+                        end)
                     end
                 end
             end
@@ -155,6 +162,9 @@ end
 function UGCPlayerPawn:DoSetMineCarMode(bEnable)
     if not IsServerRuntime() then
         self.bIsMineCarMode = bEnable == true
+        if bEnable ~= true then
+            ClearMineCarSkills(self)
+        end
         return
     end
 

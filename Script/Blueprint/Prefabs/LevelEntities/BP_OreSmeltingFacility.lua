@@ -191,13 +191,9 @@ function BP_OreSmeltingFacility:ReceiveBeginPlay()
     self.bOverlapBound = true
 
     pcall(function()
-        if Trigger.SetGenerateOverlapEvents then
-            Trigger:SetGenerateOverlapEvents(true)
-        else
-            Trigger.bGenerateOverlapEvents = true
-        end
+        Trigger.bGenerateOverlapEvents = true
         if Trigger.SetSphereRadius then
-            Trigger:SetSphereRadius(280)
+            Trigger:SetSphereRadius(280, true)
         elseif Trigger.SphereRadius ~= nil then
             Trigger.SphereRadius = 280
         end

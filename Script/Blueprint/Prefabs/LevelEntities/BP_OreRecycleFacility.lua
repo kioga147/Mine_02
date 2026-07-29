@@ -167,13 +167,9 @@ function BP_OreRecycleFacility:ReceiveBeginPlay()
     self.bOverlapBound = true
 
     pcall(function()
-        if Trigger.SetGenerateOverlapEvents then
-            Trigger:SetGenerateOverlapEvents(true)
-        else
-            Trigger.bGenerateOverlapEvents = true
-        end
+        Trigger.bGenerateOverlapEvents = true
         if Trigger.SetSphereRadius then
-            Trigger:SetSphereRadius(250)
+            Trigger:SetSphereRadius(250, true)
         elseif Trigger.SphereRadius ~= nil then
             Trigger.SphereRadius = 250
         end

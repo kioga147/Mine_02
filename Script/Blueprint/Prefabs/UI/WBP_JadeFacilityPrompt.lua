@@ -56,13 +56,9 @@ local function SetPromptTextColor(Widget)
         return
     end
     local Color = { R = 0.08, G = 0.10, B = 0.12, A = 1 }
-    if Widget.SetColorAndOpacity then
-        pcall(function()
-            Widget:SetColorAndOpacity(MakeSlateColor(Color))
-        end)
-    elseif Widget.ColorAndOpacity ~= nil then
-        Widget.ColorAndOpacity = MakeSlateColor(Color)
-    end
+    pcall(function()
+        Widget:SetColorAndOpacity(MakeSlateColor(Color))
+    end)
 end
 
 local function GetCanvasSlot(Widget)

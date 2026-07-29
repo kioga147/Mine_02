@@ -131,12 +131,6 @@ end
 ---背包UI打开后执行
 ---@param Panel UUserWidget @背包主界面控件
 function BP_BackpackUIComponentV2_Custom:OnOpenBattleMainPanel(Panel)
-    if BP_BackpackUIComponentV2_Custom.SuperClass.OnOpenBattleMainPanel then
-        pcall(function()
-            BP_BackpackUIComponentV2_Custom.SuperClass.OnOpenBattleMainPanel(self, Panel)
-        end)
-    end
-    
     local Player = self:GetOwner()
     local BackpackComponent = GetBackpackComponentModule()
     if BackpackComponent == nil or BackpackComponent.GetBackpackWeightInfo == nil then

@@ -232,17 +232,8 @@ function UGCPlayerPawn:DoSetMineCarMode(bEnable)
         
         ClearMineCarSkills(self)
 
-        local BackpackComp = GetBackpackComponent()
-        if BackpackComp and BackpackComp.GetBackpackWeightInfo then
-            local backpackWeightInfo = BackpackComp.GetBackpackWeightInfo(self)
-            if backpackWeightInfo and backpackWeightInfo.CurrentWeight >= HEAVY_WEIGHT_THRESHOLD then
-                UGCAttributeSystem.SetGameAttributeValue(self, 
-                    UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, HEAVY_SPEED_SCALE)
-            else
-                UGCAttributeSystem.SetGameAttributeValue(self, 
-                    UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, NORMAL_SPEED_SCALE)
-            end
-        end
+        UGCAttributeSystem.SetGameAttributeValue(self,
+            UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, NORMAL_SPEED_SCALE)
         
         ugcprint("[矿车模式] ❌ 已退出矿车模式")
     end

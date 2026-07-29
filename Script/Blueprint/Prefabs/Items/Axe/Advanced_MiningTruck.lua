@@ -89,6 +89,22 @@ local function StopMineCarVisual(Player)
     end
 end
 
+local function NotifyRepairRequired(Player)
+    local Msg = "采矿车无法使用，请回维修处检查/维修后再使用"
+    if UGCWidgetManagerSystem and UGCWidgetManagerSystem.ShowTipsUIWithPC then
+        local PC = nil
+        if Player and Player.GetController then
+            pcall(function()
+                PC = Player:GetController()
+            end)
+        end
+        pcall(function()
+            UGCWidgetManagerSystem.ShowTipsUIWithPC(Msg, PC)
+        end)
+    end
+    ugcprint("[VehicleRepair] " .. Msg)
+end
+
 local function RequestBeginTrip(Player)
     if Player == nil or Player.GetController == nil then
         return false
@@ -113,6 +129,7 @@ function Advanced_MiningTruck:CanUseV2()
     local Player = GetPlayerPawnFromItem(self)
     if IsVehicleBroken(Player) then
         StopMineCarVisual(Player)
+        NotifyRepairRequired(Player)
         ugcprint("[矿车物品] 高级采矿车已损坏，需要先维修")
         return false
     end
@@ -126,6 +143,7 @@ function Advanced_MiningTruck:OnUseV2()
     local Player = GetPlayerPawnFromItem(self)
     if IsVehicleBroken(Player) then
         StopMineCarVisual(Player)
+        NotifyRepairRequired(Player)
         ugcprint("[VehicleRepair] Advanced mining truck is broken; repair required")
         return
     end
@@ -161,6 +179,7 @@ function Advanced_MiningTruck:OnEquip()
     local Player = GetPlayerPawnFromItem(self)
     if IsVehicleBroken(Player) then
         StopMineCarVisual(Player)
+        NotifyRepairRequired(Player)
         ugcprint("[VehicleRepair] Advanced mining truck equip blocked by repair state")
         return
     end

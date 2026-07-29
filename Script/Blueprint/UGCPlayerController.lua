@@ -2132,13 +2132,13 @@ function UGCPlayerController:Server_BeginMineCarTrip(VehicleId)
 
     local State = GetMiningVehicleState(self, Key)
     if State == VEHICLE_STATE_BROKEN then
-        NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "已损坏，请先维修")
+        NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "已损坏，请回维修处维修后再使用")
         SyncVehicleRepairStateToClient(self, Key)
         ForceStopMineCarMode(self)
         return
     end
     if State == VEHICLE_STATE_PENDING_CHECK then
-        NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "需要先返程检查")
+        NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "需要返程检查，请回维修处检查后再使用")
         SyncVehicleRepairStateToClient(self, Key)
         ForceStopMineCarMode(self)
         return
@@ -2224,6 +2224,11 @@ function UGCPlayerController:Client_VehicleRepairNotify(Msg)
     Msg = tostring(Msg or "")
     self.VehicleRepairLastMsg = Msg
     ugcprint("[VehicleRepair] Notify: " .. Msg)
+    if UGCWidgetManagerSystem and UGCWidgetManagerSystem.ShowTipsUIWithPC then
+        pcall(function()
+            UGCWidgetManagerSystem.ShowTipsUIWithPC(Msg, self)
+        end)
+    end
     if self.OnVehicleRepairNotify then
         pcall(self.OnVehicleRepairNotify, Msg)
     end

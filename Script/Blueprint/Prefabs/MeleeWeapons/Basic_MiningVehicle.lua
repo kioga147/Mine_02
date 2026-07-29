@@ -77,6 +77,22 @@ local function StopMineCarVisual(PlayerPawn)
     end
 end
 
+local function NotifyRepairRequired(PlayerPawn)
+    local Msg = "采矿车无法使用，请回维修处检查/维修后再使用"
+    if UGCWidgetManagerSystem and UGCWidgetManagerSystem.ShowTipsUIWithPC then
+        local PC = nil
+        if PlayerPawn and PlayerPawn.GetController then
+            pcall(function()
+                PC = PlayerPawn:GetController()
+            end)
+        end
+        pcall(function()
+            UGCWidgetManagerSystem.ShowTipsUIWithPC(Msg, PC)
+        end)
+    end
+    ugcprint("[VehicleRepair] " .. Msg)
+end
+
 local function GetControllerFromPawn(PlayerPawn)
     if PlayerPawn == nil or PlayerPawn.GetController == nil then
         return nil
@@ -143,6 +159,7 @@ function Basic_MiningVehicle:ReceiveBeginPlay()
     if PlayerPawn then
         if IsVehicleBroken(PlayerPawn) then
             StopMineCarVisual(PlayerPawn)
+            NotifyRepairRequired(PlayerPawn)
             ugcprint("[MineCarTrip] basic vehicle blocked by repair state")
             return
         end

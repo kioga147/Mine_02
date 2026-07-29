@@ -174,8 +174,21 @@ function Intermediate_MiningTruck:OnDisuseV2()
     end
 end
 
+function Intermediate_MiningTruck:CanEquip()
+    local Player = GetPlayerPawnFromItem(self)
+    if IsVehicleBroken(Player) then
+        StopMineCarVisual(Player)
+        NotifyRepairRequired(Player)
+        ugcprint("[VehicleRepair] Intermediate mining truck CanEquip blocked by repair state")
+        return false
+    end
+    if Intermediate_MiningTruck.SuperClass.CanEquip then
+        return Intermediate_MiningTruck.SuperClass.CanEquip(self)
+    end
+    return true
+end
+
 function Intermediate_MiningTruck:OnEquip()
-    Intermediate_MiningTruck.SuperClass.OnEquip(self);
     local Player = GetPlayerPawnFromItem(self)
     if IsVehicleBroken(Player) then
         StopMineCarVisual(Player)
@@ -183,6 +196,7 @@ function Intermediate_MiningTruck:OnEquip()
         ugcprint("[VehicleRepair] Intermediate mining truck equip blocked by repair state")
         return
     end
+    Intermediate_MiningTruck.SuperClass.OnEquip(self);
     if Player and Player.IsMineCarMode and Player:IsMineCarMode() then
         return
     end

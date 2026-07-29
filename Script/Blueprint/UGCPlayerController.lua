@@ -2108,6 +2108,59 @@ local function ForceStopMineCarMode(PC)
     InvokeClient(PC, "Client_ForceStopMineCarMode")
 end
 
+local function IsPawnMineCarMode(PC)
+    local Pawn = GetPawnByControllerSafe(PC)
+    if Pawn and Pawn.IsMineCarMode then
+        local Ok, bMineCar = pcall(function()
+            return Pawn:IsMineCarMode()
+        end)
+        if Ok and bMineCar == true then
+            return true, Pawn
+        end
+    end
+    return false, Pawn
+end
+
+local function ApplyMineCarModeForVehicle(PC, Vehicle, bForceRefresh)
+    local Pawn = GetPawnByControllerSafe(PC)
+    if Pawn and Pawn.SetMineCarMode then
+        if bForceRefresh and Pawn.IsMineCarMode then
+            local Ok, bMineCar = pcall(function()
+                return Pawn:IsMineCarMode()
+            end)
+            if Ok and bMineCar == true then
+                Pawn:SetMineCarMode(false)
+            end
+        end
+        UGCAttributeSystem.SetGameAttributeValue(Pawn, "AxeLevel", math.floor(tonumber(Vehicle.MineLevel) or 0))
+        Pawn:SetMineCarMode(true)
+        return true
+    end
+    return false
+end
+
+local function ShouldThrottleMineCarBeginTrip(PC, Key)
+    if PC == nil or Key == nil then
+        return false
+    end
+    if PC.MineCarBeginTripTimeMap == nil then
+        PC.MineCarBeginTripTimeMap = {}
+    end
+    local Now = nil
+    if UGCGameSystem and UGCGameSystem.GetServerTimeSec then
+        local Ok, ServerTime = pcall(UGCGameSystem.GetServerTimeSec)
+        if Ok and type(ServerTime) == "number" then
+            Now = ServerTime
+        end
+    end
+    if Now == nil then
+        Now = os.clock()
+    end
+    local Last = tonumber(PC.MineCarBeginTripTimeMap[Key]) or 0
+    PC.MineCarBeginTripTimeMap[Key] = Now
+    return Last > 0 and (Now - Last) < 0.25
+end
+
 local function EnsureVehicleRepairRandomSeed(PC, VehicleId)
     if PC.bVehicleRepairRandomSeeded then
         return
@@ -2130,6 +2183,11 @@ function UGCPlayerController:Server_BeginMineCarTrip(VehicleId)
         return
     end
 
+    if ShouldThrottleMineCarBeginTrip(self, Key) then
+        ugcprint("[MineCarTrip] duplicate begin trip ignored", Key)
+        return
+    end
+
     local State = GetMiningVehicleState(self, Key)
     if State == VEHICLE_STATE_BROKEN then
         NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "已损坏，请回维修处维修后再使用")
@@ -2147,24 +2205,60 @@ function UGCPlayerController:Server_BeginMineCarTrip(VehicleId)
     if State == VEHICLE_STATE_ACTIVE then
         self.ActiveMiningVehicleId = Key
         SyncVehicleRepairStateToClient(self, Key)
+        ugcprint("[MineCarTrip] active vehicle requested again; refresh mode", Key)
+        if ApplyMineCarModeForVehicle(self, Vehicle, true) then
+            NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "正在使用中，已恢复车身")
+        else
+            NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "正在使用中，但恢复车身失败")
+        end
         return
     end
-    if (tonumber(self.ActiveMiningVehicleId) or 0) > 0 then
-        NotifyVehicleRepair(self, "已有采矿车正在使用中")
-        ForceStopMineCarMode(self)
-        return
+
+    local ActiveId = tonumber(self.ActiveMiningVehicleId) or 0
+    if ActiveId > 0 then
+        if ActiveId == Key then
+            SyncVehicleRepairStateToClient(self, Key)
+            if ApplyMineCarModeForVehicle(self, Vehicle, true) then
+                NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "正在使用中，已恢复车身")
+            else
+                NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "正在使用中，但恢复车身失败")
+            end
+            return
+        end
+
+        local bPawnMineCarMode = IsPawnMineCarMode(self)
+        if bPawnMineCarMode then
+            local ActiveVehicle = VehicleRepairConfig.GetVehicle(ActiveId)
+            if ActiveVehicle ~= nil then
+                ugcprint("[MineCarTrip] active vehicle mismatch; restoring active vehicle", ActiveId, "request", Key)
+                ApplyMineCarModeForVehicle(self, ActiveVehicle, true)
+                SyncVehicleRepairStateToClient(self, ActiveId)
+            end
+            NotifyVehicleRepair(self, "已有采矿车正在使用中，已恢复车身，请先返程")
+            return
+        end
+
+        SetMiningVehicleState(self, ActiveId, VEHICLE_STATE_PENDING_CHECK)
+        SyncVehicleRepairStateToClient(self, ActiveId)
+        self.ActiveMiningVehicleId = 0
+        ugcprint("[MineCarTrip] stale active vehicle cleared to pending check", ActiveId, "request", Key)
+        NotifyVehicleRepair(self, "上一辆采矿车已返程，请到维修处检查")
     end
 
     self.ActiveMiningVehicleId = Key
     SetMiningVehicleState(self, Key, VEHICLE_STATE_ACTIVE)
-    SyncVehicleRepairStateToClient(self, Key)
 
-    local Pawn = GetPawnByControllerSafe(self)
-    if Pawn and Pawn.SetMineCarMode then
-        UGCAttributeSystem.SetGameAttributeValue(Pawn, "AxeLevel", math.floor(tonumber(Vehicle.MineLevel) or 0))
-        Pawn:SetMineCarMode(true)
+    if ApplyMineCarModeForVehicle(self, Vehicle) then
+        SyncVehicleRepairStateToClient(self, Key)
+        NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "已出车")
+        return
     end
-    NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "已出车")
+
+    self.ActiveMiningVehicleId = 0
+    SetMiningVehicleState(self, Key, VEHICLE_STATE_READY)
+    SyncVehicleRepairStateToClient(self, Key)
+    ugcprint("[MineCarTrip] failed to apply mine car mode", Key)
+    NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "出车失败，请重新使用")
 end
 
 function UGCPlayerController:Server_EndMineCarTrip(VehicleId)

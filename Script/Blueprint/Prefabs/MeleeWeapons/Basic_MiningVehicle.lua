@@ -77,6 +77,12 @@ local function StopMineCarVisual(PlayerPawn)
     end
 end
 
+local function AttachCurrentWeaponToBack(PlayerPawn)
+    if PlayerPawn and UGCWeaponManagerSystem and UGCWeaponManagerSystem.CurrentWeaponAttachToBack then
+        pcall(UGCWeaponManagerSystem.CurrentWeaponAttachToBack, PlayerPawn)
+    end
+end
+
 local function NotifyRepairRequired(PlayerPawn)
     local Msg = "采矿车无法使用，请回维修处检查/维修后再使用"
     if UGCWidgetManagerSystem and UGCWidgetManagerSystem.ShowTipsUIWithPC then
@@ -159,6 +165,7 @@ function Basic_MiningVehicle:ReceiveBeginPlay()
     if PlayerPawn then
         if IsVehicleBroken(PlayerPawn) then
             StopMineCarVisual(PlayerPawn)
+            AttachCurrentWeaponToBack(PlayerPawn)
             NotifyRepairRequired(PlayerPawn)
             ugcprint("[MineCarTrip] basic vehicle blocked by repair state")
             return

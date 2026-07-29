@@ -44,6 +44,27 @@ local function SetVisible(Widget, bShow)
     end)
 end
 
+local function MakeSlateColor(C)
+    return {
+        SpecifiedColor = { R = C.R, G = C.G, B = C.B, A = C.A or 1 },
+        ColorUseRule = 0,
+    }
+end
+
+local function SetPromptTextColor(Widget)
+    if not Widget then
+        return
+    end
+    local Color = { R = 0.08, G = 0.10, B = 0.12, A = 1 }
+    if Widget.SetColorAndOpacity then
+        pcall(function()
+            Widget:SetColorAndOpacity(MakeSlateColor(Color))
+        end)
+    elseif Widget.ColorAndOpacity ~= nil then
+        Widget.ColorAndOpacity = MakeSlateColor(Color)
+    end
+end
+
 local function GetCanvasSlot(Widget)
     if not Widget then
         return nil
@@ -93,6 +114,7 @@ function WBP_JadeFacilityPrompt:ApplyPromptLayout()
     -- 旧「进入」隐藏；模式选择用解锁/快速/手动/关闭
     SetVisible(GetW(self, "Btn_Enter"), false)
     SetVisible(GetW(self, "Gap_Prompt"), false)
+    SetPromptTextColor(GetW(self, "Txt_Prompt"))
 
     local TxtUnlock = GetW(self, "Txt_Unlock")
     if TxtUnlock and TxtUnlock.SetText then
@@ -134,6 +156,7 @@ function WBP_JadeFacilityPrompt:RefreshShopState(Status)
             Line = Line .. "\n" .. LastMsg
         end
         Txt:SetText(Line)
+        SetPromptTextColor(Txt)
     end
 
     -- 未解锁：只显示解锁 + 关闭；已解锁：快速 + 手动 + 关闭
@@ -158,6 +181,14 @@ function WBP_JadeFacilityPrompt:RefreshShopState(Status)
     if BtnManual and BtnManual.SetIsEnabled then
         BtnManual:SetIsEnabled(JadeCount >= 1)
     end
+    local BtnClose = GetW(self, "Btn_Close")
+    if BtnClose and BtnClose.SetIsEnabled then
+        BtnClose:SetIsEnabled(true)
+    end
+end
+
+function WBP_JadeFacilityPrompt:ApplyPromptTextStyle()
+    SetPromptTextColor(GetW(self, "Txt_Prompt"))
 end
 
 function WBP_JadeFacilityPrompt:SetShopCallbacks(Callbacks)

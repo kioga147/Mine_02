@@ -24,6 +24,22 @@ local AXE_LEVEL_BY_CLASS = {
 
 local MINE_CAR_SPEED_SCALE = 4.0
 
+local MINE_CAR_SKILL_PATHS = {
+    "Asset/Blueprint/Prefabs/Skills/BasicVehicle.BasicVehicle_C",
+    "Asset/Blueprint/Prefabs/Skills/MidVehicle.MidVehicle_C",
+    "Asset/Blueprint/Prefabs/Skills/MaxVehicle.MaxVehicle_C",
+}
+
+local function IsServerRuntime()
+    if UGCGameSystem and UGCGameSystem.IsServer then
+        return UGCGameSystem.IsServer()
+    end
+    if UE_IsServer then
+        return UE_IsServer()
+    end
+    return false
+end
+
 local BP_BackpackComponentV2_Custom = nil
 local function GetBackpackComponent()
     if not BP_BackpackComponentV2_Custom then
@@ -35,6 +51,44 @@ local function GetBackpackComponent()
         end
     end
     return BP_BackpackComponentV2_Custom
+end
+
+local function LoadMineCarSkillClass(SkillPath)
+    if UGCObjectUtility and UGCObjectUtility.LoadClass and UGCGameSystem and UGCGameSystem.GetUGCResourcesFullPath then
+        local Ok, FullPath = pcall(UGCGameSystem.GetUGCResourcesFullPath, SkillPath)
+        if Ok and FullPath then
+            local LoadOk, SkillClass = pcall(UGCObjectUtility.LoadClass, FullPath)
+            if LoadOk and SkillClass then
+                return SkillClass
+            end
+        end
+    end
+    return SkillPath
+end
+
+local function ClearMineCarSkills(Actor)
+    if not IsServerRuntime() or Actor == nil or UGCPersistEffectSystem == nil then
+        return
+    end
+
+    for _, SkillPath in ipairs(MINE_CAR_SKILL_PATHS) do
+        local SkillClass = LoadMineCarSkillClass(SkillPath)
+        local Ok, Skills = pcall(UGCPersistEffectSystem.GetSkillsByClass, Actor, SkillClass)
+        if Ok and type(Skills) == "table" then
+            for _, Skill in ipairs(Skills) do
+                if Skill then
+                    local Removed = false
+                    if UGCPersistEffectSystem.RemoveSkillInstance then
+                        local RemoveOk = pcall(UGCPersistEffectSystem.RemoveSkillInstance, Actor, Skill)
+                        Removed = RemoveOk
+                    end
+                    if not Removed and Skill.Cancel then
+                        pcall(Skill.Cancel, Skill, EPersistEffectUnApplyReason.Normal)
+                    end
+                end
+            end
+        end
+    end
 end
 
 local function GetAxeLevelByClassName(ClassName)
@@ -56,8 +110,10 @@ local lastWeaponName = ""
 function UGCPlayerPawn:ReceiveBeginPlay()
     UGCPlayerPawn.SuperClass.ReceiveBeginPlay(self)
     
-    UGCAttributeSystem.SetGameAttributeValue(self, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, NORMAL_SPEED_SCALE)
-    UGCAttributeSystem.SetGameAttributeValue(self, "AxeLevel", 0)
+    if IsServerRuntime() then
+        UGCAttributeSystem.SetGameAttributeValue(self, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, NORMAL_SPEED_SCALE)
+        UGCAttributeSystem.SetGameAttributeValue(self, "AxeLevel", 0)
+    end
     
     self.bIsMineCarMode = false
 end
@@ -65,12 +121,7 @@ end
 function UGCPlayerPawn:SetMineCarMode(bEnable)
     ugcprint("[矿车模式] 设置矿车模式:", bEnable)
     
-    local IsServer = false
-    if UGCGameSystem and UGCGameSystem.IsServer then
-        IsServer = UGCGameSystem.IsServer()
-    elseif UE_IsServer then
-        IsServer = UE_IsServer()
-    end
+    local IsServer = IsServerRuntime()
     
     ugcprint("[矿车模式] 当前是否服务器:", IsServer)
     
@@ -84,27 +135,36 @@ function UGCPlayerPawn:SetMineCarMode(bEnable)
         self:DoSetMineCarMode(bEnable)
     else
         ugcprint("[矿车模式] 在客户端，发送RPC到服务器")
+        self.bIsMineCarMode = bEnable == true
         if self.Server_SetMineCarMode then
             self:Server_SetMineCarMode(bEnable)
         else
             ugcprint("[矿车模式] ❌ Server_SetMineCarMode RPC不存在")
-            self:DoSetMineCarMode(bEnable)
         end
     end
 end
 
 function UGCPlayerPawn:Server_SetMineCarMode(bEnable)
+    if not IsServerRuntime() then
+        return
+    end
     ugcprint("[矿车模式] Server_SetMineCarMode:", bEnable)
     self:DoSetMineCarMode(bEnable)
 end
 
 function UGCPlayerPawn:DoSetMineCarMode(bEnable)
+    if not IsServerRuntime() then
+        self.bIsMineCarMode = bEnable == true
+        return
+    end
+
     if bEnable then
         if self.bIsMineCarMode then
             ugcprint("[矿车模式] ⚠️ 矿车模式已激活")
             return
         end
         
+        ClearMineCarSkills(self)
         self.bIsMineCarMode = true
         UGCAttributeSystem.SetGameAttributeValue(self, 
             UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, MINE_CAR_SPEED_SCALE)
@@ -170,6 +230,8 @@ function UGCPlayerPawn:DoSetMineCarMode(bEnable)
             end
         end
         
+        ClearMineCarSkills(self)
+
         local BackpackComp = GetBackpackComponent()
         if BackpackComp and BackpackComp.GetBackpackWeightInfo then
             local backpackWeightInfo = BackpackComp.GetBackpackWeightInfo(self)
@@ -191,7 +253,7 @@ function UGCPlayerPawn:IsMineCarMode()
 end
 
 function UGCPlayerPawn:UpdateSpeedByWeight()
-    if self.bIsMineCarMode then
+    if self.bIsMineCarMode or not IsServerRuntime() then
         return
     end
     
@@ -213,7 +275,7 @@ end
 function UGCPlayerPawn:ReceiveTick(DeltaTime)
     UGCPlayerPawn.SuperClass.ReceiveTick(self, DeltaTime)
     
-    if self.bIsMineCarMode then
+    if self.bIsMineCarMode or not IsServerRuntime() then
         return
     end
     
@@ -259,7 +321,7 @@ function UGCPlayerPawn:ReceiveEndPlay()
 end
 
 function UGCPlayerPawn:GetReplicatedProperties()
-    return {"__SubObjectRepList", "Lazy"}
+    return {"__SubObjectRepList", "Lazy", "bIsMineCarMode"}
 end
 
 function UGCPlayerPawn:GetAvailableServerRPCs()

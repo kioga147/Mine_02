@@ -3,6 +3,7 @@
 local BP_BackpackComponentV2_Custom = {} 
 
 local MAX_WEIGHT_CAPACITY = 100
+local AUTO_UPGRADE_BACKPACK_ON_ADD = false
 
 local BACKPACK_LEVEL_CONFIG = {
     [1] = { Capacity = 10, Cost = 0 },
@@ -226,7 +227,9 @@ function BP_BackpackComponentV2_Custom:OnAddItemV2(DefineID, Count)
     
     ugcprint("[背包负重] =======================")
     
-    CheckAutoUpgrade(Player)
+    if AUTO_UPGRADE_BACKPACK_ON_ADD then
+        CheckAutoUpgrade(Player)
+    end
     
     if Player and Player.UpdateSpeedByWeight then
         Player:UpdateSpeedByWeight()
@@ -263,7 +266,9 @@ function BP_BackpackComponentV2_Custom:OnMergeItemV2(ItemDefineID, OldCount, Mer
     
     ugcprint("[背包负重] =======================")
     
-    CheckAutoUpgrade(Player)
+    if AUTO_UPGRADE_BACKPACK_ON_ADD then
+        CheckAutoUpgrade(Player)
+    end
 end
 
 ---func 能否移除物品(服务端调用)

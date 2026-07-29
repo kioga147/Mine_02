@@ -45,6 +45,7 @@ end
 
 local BP_TalentMarketFacility = {
     bLocalPlayerInside = false,
+    bPromptDismissed = false,
     PromptWidget = nil,
     bPromptOpening = false,
     bOverlapBound = false,
@@ -63,6 +64,17 @@ local function IsLocalPlayerPawn(OtherActor)
     end
     local LocalPawn = UGCGameSystem.GetLocalPlayerPawn()
     return LocalPawn ~= nil and LocalPawn == OtherActor
+end
+
+local function IsLocalPlayerMineCarMode()
+    local LocalPawn = UGCGameSystem.GetLocalPlayerPawn()
+    if LocalPawn ~= nil and LocalPawn.IsMineCarMode then
+        local Ok, Result = pcall(function()
+            return LocalPawn:IsMineCarMode()
+        end)
+        return Ok and Result == true
+    end
+    return false
 end
 
 local function GetLocalPC()
@@ -174,11 +186,7 @@ function BP_TalentMarketFacility:ReceiveBeginPlay()
     self.bOverlapBound = true
 
     pcall(function()
-        if Trigger.SetGenerateOverlapEvents then
-            Trigger:SetGenerateOverlapEvents(true)
-        else
-            Trigger.bGenerateOverlapEvents = true
-        end
+        Trigger.bGenerateOverlapEvents = true
         if Trigger.SetSphereRadius then
             Trigger:SetSphereRadius(250)
         elseif Trigger.SphereRadius ~= nil then
@@ -217,7 +225,7 @@ end
 
 function BP_TalentMarketFacility:OnTriggerBeginOverlap(
     OverlappedComponent, OtherActor, OtherComp, OtherBodyIndex, bFromSweep, SweepResult)
-    if not IsLocalPlayerPawn(OtherActor) or self.bLocalPlayerInside then
+    if not IsLocalPlayerPawn(OtherActor) or self.bLocalPlayerInside or self.bPromptDismissed or IsLocalPlayerMineCarMode() then
         return
     end
     self.bLocalPlayerInside = true
@@ -231,6 +239,7 @@ function BP_TalentMarketFacility:OnTriggerEndOverlap(
         return
     end
     self.bLocalPlayerInside = false
+    self.bPromptDismissed = false
     ugcprint("[TalentMarket] 本机玩家离开人才市场")
     self:HidePrompt()
 end
@@ -277,6 +286,11 @@ function BP_TalentMarketFacility:StartRefreshTimer()
     local Ok, Handle = pcall(function()
         return UGCTimerUtility.CreateLuaTimer(1.0, function()
             if Facility.bLocalPlayerInside and Facility.PromptWidget ~= nil then
+                if IsLocalPlayerMineCarMode() then
+                    Facility.bPromptDismissed = true
+                    Facility:HidePrompt()
+                    return
+                end
                 Facility:RefreshPromptUI()
             end
         end, true)
@@ -356,6 +370,12 @@ function BP_TalentMarketFacility:ApplyLabels(Widget, Status)
 end
 
 function BP_TalentMarketFacility:RefreshPromptUI()
+    if IsLocalPlayerMineCarMode() then
+        self.bPromptDismissed = true
+        self:HidePrompt()
+        return
+    end
+
     local Widget = self.PromptWidget
     if Widget == nil then
         return
@@ -394,6 +414,7 @@ function BP_TalentMarketFacility:RefreshPromptUI()
     SetEnabled(GetW(Widget, "Btn_Unlock"), CanMain)
     SetEnabled(GetW(Widget, "Btn_Quick"), Status.bUnlocked == true and JobState == JOB_IDLE)
     SetEnabled(GetW(Widget, "Btn_Manual"), Status.bUnlocked == true)
+    SetEnabled(GetW(Widget, "Btn_Close"), true)
     self:ApplyLabels(Widget, Status)
 
     local Line
@@ -426,6 +447,12 @@ function BP_TalentMarketFacility:RefreshPromptUI()
 end
 
 function BP_TalentMarketFacility:ShowPrompt()
+    if IsLocalPlayerMineCarMode() then
+        self.bPromptDismissed = true
+        self:HidePrompt()
+        return
+    end
+
     if self.PromptWidget ~= nil or self.bPromptOpening then
         if self.PromptWidget then
             self:RefreshPromptUI()
@@ -442,7 +469,8 @@ function BP_TalentMarketFacility:ShowPrompt()
             ugcprint("[TalentMarket] 提示 UI 创建失败")
             return
         end
-        if not self.bLocalPlayerInside then
+        if not self.bLocalPlayerInside or IsLocalPlayerMineCarMode() then
+            self.bPromptDismissed = IsLocalPlayerMineCarMode()
             if Widget.RemoveFromParent then
                 pcall(function()
                     Widget:RemoveFromParent()
@@ -502,6 +530,7 @@ function BP_TalentMarketFacility:HidePrompt()
 end
 
 function BP_TalentMarketFacility:OnCloseClicked()
+    self.bPromptDismissed = true
     self:HidePrompt()
 end
 

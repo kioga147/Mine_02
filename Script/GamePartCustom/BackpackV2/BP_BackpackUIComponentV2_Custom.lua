@@ -17,6 +17,17 @@ local BACKPACK_LEVEL_CONFIG = {
 
 local COIN_ITEM_ID = 8310002
 
+local BP_BackpackComponentV2_Custom_Module = nil
+local function GetBackpackComponentModule()
+    if BP_BackpackComponentV2_Custom_Module == nil and UGCGameSystem and UGCGameSystem.UGCRequire then
+        local Ok, Mod = pcall(UGCGameSystem.UGCRequire, "Script.GamePartCustom.BackpackV2.BP_BackpackComponentV2_Custom")
+        if Ok and type(Mod) == "table" then
+            BP_BackpackComponentV2_Custom_Module = Mod
+        end
+    end
+    return BP_BackpackComponentV2_Custom_Module
+end
+
 local WarehouseConfig = nil
 do
     local Ok, Mod = pcall(function()
@@ -120,10 +131,18 @@ end
 ---背包UI打开后执行
 ---@param Panel UUserWidget @背包主界面控件
 function BP_BackpackUIComponentV2_Custom:OnOpenBattleMainPanel(Panel)
-    BP_BackpackUIComponentV2_Custom.SuperClass.OnOpenBattleMainPanel(self, Panel)
+    if BP_BackpackUIComponentV2_Custom.SuperClass.OnOpenBattleMainPanel then
+        pcall(function()
+            BP_BackpackUIComponentV2_Custom.SuperClass.OnOpenBattleMainPanel(self, Panel)
+        end)
+    end
     
     local Player = self:GetOwner()
-    local backpackWeightInfo = BP_BackpackComponentV2_Custom.GetBackpackWeightInfo(Player)
+    local BackpackComponent = GetBackpackComponentModule()
+    if BackpackComponent == nil or BackpackComponent.GetBackpackWeightInfo == nil then
+        return
+    end
+    local backpackWeightInfo = BackpackComponent.GetBackpackWeightInfo(Player)
     if backpackWeightInfo then
         local weightText = string.format("%dkg/%dkg", math.floor(backpackWeightInfo.CurrentWeight), backpackWeightInfo.MaxWeight)
         

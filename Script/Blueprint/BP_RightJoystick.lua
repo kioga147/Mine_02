@@ -151,4 +151,24 @@ end
 
 -- end
 
+function BP_RightJoystick:ResetJoystickInput()
+    if self.Left then
+        pcall(function()
+            if self.Left.ClearTouchInput then
+                self.Left:ClearTouchInput()
+            end
+            if self.Left.ReleaseAllPointerCapture then
+                self.Left:ReleaseAllPointerCapture()
+            end
+            self.Left.bIsPressed = false
+            self.Left.CurrentVector = nil
+        end)
+    end
+    
+    self.bIsFiring = false
+    self.bFirePrepared = false
+    self.PreparedWeapon = nil
+    self.LastWeaponType = nil
+end
+
 return BP_RightJoystick

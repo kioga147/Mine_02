@@ -107,21 +107,16 @@ local function _GetPlayerPawn(Player)
     return Player
 end
 
-local function _UpdateWeightSpeed(Player)
+local function _NotifyPawnUpdateSpeed(Player)
     if Player == nil then return end
-    local curWeight = GetCurrentTotalWeight(Player)
-    local ratio = math.min(curWeight / MAX_WEIGHT_CAPACITY, 1.0)
-    local speedScale = NORMAL_SPEED_SCALE * (1.0 - ratio * 0.5)
     local Pawn = _GetPlayerPawn(Player)
-    ugcprint(string.format("[移速] 负重计算: 当前%.0fkg / 最大%dkg → 速度x%.2f (OwnerType=%s, PawnType=%s)",
-        curWeight, MAX_WEIGHT_CAPACITY, speedScale,
-        Player.GetClass and Player:GetClass() or "?",
-        Pawn and Pawn.GetClass and Pawn:GetClass() or "?"))
-    UGCAttributeSystem.SetGameAttributeValue(Pawn, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, speedScale)
+    if Pawn and Pawn.UpdateMoveSpeed then
+        Pawn:UpdateMoveSpeed()
+    end
 end
 
 function BP_BackpackComponentV2_Custom.UpdateWeightSpeed(Player)
-    _UpdateWeightSpeed(Player)
+    _NotifyPawnUpdateSpeed(Player)
 end
 
 function BP_BackpackComponentV2_Custom.GetBackpackWeightInfo(Player)
@@ -161,7 +156,7 @@ function BP_BackpackComponentV2_Custom:InitEventAfterPlayerEnter()
     if Ok then
         ugcprint(string.format("[仓库] 初始容量 %d→%d", Cap, Cap + Need))
     end
-    _UpdateWeightSpeed(Player)
+    _NotifyPawnUpdateSpeed(Player)
 end
 
 ---func 能否添加物品进背包(服务端调用)
@@ -209,7 +204,7 @@ function BP_BackpackComponentV2_Custom:OnAddItemV2(DefineID, Count)
     BP_BackpackComponentV2_Custom.SuperClass.OnAddItemV2(self, DefineID, Count)
     local Player = self:GetOwner()
     CheckAutoUpgrade(Player)
-    _UpdateWeightSpeed(Player)
+    _NotifyPawnUpdateSpeed(Player)
 end
 
 ---func 能否合并物品(新添加物品能否与已有格子物品堆叠, 格子物品即物品实例)(服务端调用)
@@ -229,7 +224,7 @@ function BP_BackpackComponentV2_Custom:OnMergeItemV2(ItemDefineID, OldCount, Mer
     BP_BackpackComponentV2_Custom.SuperClass.OnMergeItemV2(self, ItemDefineID, OldCount, MergeCount)
     local Player = self:GetOwner()
     CheckAutoUpgrade(Player)
-    _UpdateWeightSpeed(Player)
+    _NotifyPawnUpdateSpeed(Player)
 end
 
 ---func 能否移除物品(服务端调用)
@@ -245,7 +240,7 @@ end
 ---@param Count number 已移除的物品数量
 function BP_BackpackComponentV2_Custom:OnRemoveItemV2(ItemDefineID, Count)
     BP_BackpackComponentV2_Custom.SuperClass.OnRemoveItemV2(self, ItemDefineID, Count)
-    _UpdateWeightSpeed(self:GetOwner())
+    _NotifyPawnUpdateSpeed(self:GetOwner())
 end
 
 ---func 能否丢弃物品(服务端调用)
@@ -261,7 +256,7 @@ end
 ---@param Count number 已丢弃的物品数量
 function BP_BackpackComponentV2_Custom:OnDropItemV2(ItemDefineID, Count)
     BP_BackpackComponentV2_Custom.SuperClass.OnDropItemV2(self, ItemDefineID, Count)
-    _UpdateWeightSpeed(self:GetOwner())
+    _NotifyPawnUpdateSpeed(self:GetOwner())
 end
 
 ---func 能否使用物品(服务端调用)
@@ -275,7 +270,7 @@ end
 ---@param ItemDefineID userdata 物品DefineID
 function BP_BackpackComponentV2_Custom:OnUseItemV2(ItemDefineID)
     BP_BackpackComponentV2_Custom.SuperClass.OnUseItemV2(self, ItemDefineID)
-    _UpdateWeightSpeed(self:GetOwner())
+    _NotifyPawnUpdateSpeed(self:GetOwner())
 end
 
 ---func 取消使用物品后回调(服务端调用) 装备/投掷物 取消使用/卸下。 注：药品不会触发此回调

@@ -6,10 +6,10 @@ local MineTeleportConfig = {
     TeleportCost = 3000,
     Zones = {
         [1] = { Name = "石滩", PadX = 20000, PadY = 28000, PadZ = 220, VolumeLabel = "MineZone_01_StoneBeach" },
-        [2] = { Name = "煤矿场", PadX = 21000, PadY = 28000, PadZ = 220, VolumeLabel = "MineZone_02_CoalField" },
-        [3] = { Name = "黄铜矿脉", PadX = 22000, PadY = 28000, PadZ = 220, VolumeLabel = "MineZone_03_CopperVein" },
-        [4] = { Name = "深层矿区", PadX = 20000, PadY = 29200, PadZ = 220, VolumeLabel = "MineZone_04_DeepMine" },
-        [5] = { Name = "宝石矿区", PadX = 21000, PadY = 29200, PadZ = 220, VolumeLabel = "MineZone_05_GemMine" },
+        [2] = { Name = "煤矿场", PadX = 40000, PadY = 28000, PadZ = 220, VolumeLabel = "MineZone_02_CoalField" },
+        [3] = { Name = "黄铜矿脉", PadX = 20000, PadY = 8000, PadZ = 220, VolumeLabel = "MineZone_03_CopperVein" },
+        [4] = { Name = "深层矿区", PadX = 20000, PadY = 48000, PadZ = 220, VolumeLabel = "MineZone_04_DeepMine" },
+        [5] = { Name = "宝石矿区", PadX = 0, PadY = 28000, PadZ = 220, VolumeLabel = "MineZone_05_GemMine" },
     },
 }
 

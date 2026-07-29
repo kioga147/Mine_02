@@ -1,6 +1,7 @@
----@class BP_OreSmeltingFacility_C:AActor
----@field BuildingMesh UStaticMeshComponent
+---@class BP_JadeAppraisalFacility_C:AActor
+---@field PromptAnchor USceneComponent
 ---@field InteractTrigger USphereComponent
+---@field BuildingMesh UStaticMeshComponent
 ---@field DefaultSceneRoot1 USceneComponent
 ---@field DefaultSceneRoot USceneComponent
 --Edit Below--

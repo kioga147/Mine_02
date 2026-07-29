@@ -10,6 +10,7 @@ local Gold_ore = {
 
 UGCGameSystem.UGCRequire('Script.GameAttribute.game_attribute_type')
 local MiningSystem = UGCGameSystem.UGCRequire('Script.GamePartCustom.MiningSystem')
+local MineTestDropConfig = UGCGameSystem.UGCRequire('Script.Common.MineTestDropConfig')
 
 function Gold_ore:ReceiveBeginPlay()
     self.ShakeTime = 0
@@ -83,6 +84,7 @@ end
 function Gold_ore:BPDie(KillingDamage, EventInstigator,DamageCauser,DamageEvent,DamageTypeID)
     self.ShakeAmplitude = 0
     self.ShakeSpeed = 0
+    MineTestDropConfig.GiveTestGold(EventInstigator)
     self.UGCPresetCommonDropItemComponent:StartDrop(self, EventInstigator, {})
 end
 

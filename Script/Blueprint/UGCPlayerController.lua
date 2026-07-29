@@ -201,6 +201,56 @@ do
     end
 end
 
+local VehicleRepairConfig = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire("Script.Common.VehicleRepairConfig")
+    end)
+    if Ok and type(Mod) == "table" then
+        VehicleRepairConfig = Mod
+    else
+        VehicleRepairConfig = {
+            UnlockCost = 5000,
+            RepairCost = 1000,
+            DamageChance = 10,
+            GoldItemId = 8310002,
+            VehicleOrder = { 1, 2, 3 },
+            Vehicles = {
+                [1] = { ItemId = 8310025, Name = "初级采矿车", RangeText = "3x3", MineLevel = 2 },
+                [2] = { ItemId = 8310024, Name = "中级采矿车", RangeText = "5x5", MineLevel = 4 },
+                [3] = { ItemId = 8310023, Name = "高级采矿车", RangeText = "7x7", MineLevel = 5 },
+            },
+            GetVehicle = function(VehicleId)
+                local Id = math.floor(tonumber(VehicleId) or 0)
+                if VehicleRepairConfig.Vehicles[Id] then
+                    return VehicleRepairConfig.Vehicles[Id], Id
+                end
+                for Key, Vehicle in pairs(VehicleRepairConfig.Vehicles) do
+                    if math.floor(tonumber(Vehicle.ItemId) or 0) == Id then
+                        return Vehicle, Key
+                    end
+                end
+                return nil, 0
+            end,
+            GetFirstVehicleId = function()
+                return 1
+            end,
+            NextVehicleId = function(CurrentId)
+                local Cur = math.floor(tonumber(CurrentId) or 0)
+                if Cur == 1 then
+                    return 2
+                elseif Cur == 2 then
+                    return 3
+                end
+                return 1
+            end,
+            RollDamage = function()
+                return math.random(1, 100) <= 10
+            end,
+        }
+    end
+end
+
 local SmeltingConfig = nil
 do
     local Ok, Mod = pcall(function()
@@ -501,6 +551,9 @@ function UGCPlayerController:ReceiveBeginPlay()
     if self.bTalentMarketUnlocked == nil then
         self.bTalentMarketUnlocked = false
     end
+    if self.bVehicleRepairUnlocked == nil then
+        self.bVehicleRepairUnlocked = false
+    end
     if self.bSmelterUnlocked == nil then
         self.bSmelterUnlocked = false
     end
@@ -515,6 +568,12 @@ function UGCPlayerController:ReceiveBeginPlay()
     end
     if self.ClientSmeltSlots == nil then
         self.ClientSmeltSlots = {}
+    end
+    if self.VehicleRepairBrokenMap == nil then
+        self.VehicleRepairBrokenMap = {}
+    end
+    if self.ClientVehicleRepairBrokenMap == nil then
+        self.ClientVehicleRepairBrokenMap = {}
     end
     ClearManualSession(self)
 
@@ -1907,6 +1966,228 @@ function UGCPlayerController:RequestCollectTalentJob()
     InvokeServer(self, "Server_CollectTalentJob")
 end
 
+--- ========== 采矿车维修处 ==========
+
+local function IsVehicleRepairUnlocked(PC)
+    return PC ~= nil and PC.bVehicleRepairUnlocked == true
+end
+
+local function EnsureVehicleRepairBrokenMap(PC)
+    if PC.VehicleRepairBrokenMap == nil then
+        PC.VehicleRepairBrokenMap = {}
+    end
+    return PC.VehicleRepairBrokenMap
+end
+
+local function GetVehicleBrokenMapForRead(PC)
+    if PC == nil then
+        return {}
+    end
+    if not UGCGameSystem.IsServer() and type(PC.ClientVehicleRepairBrokenMap) == "table" then
+        return PC.ClientVehicleRepairBrokenMap
+    end
+    return EnsureVehicleRepairBrokenMap(PC)
+end
+
+local function IsMiningVehicleBroken(PC, VehicleId)
+    local _, Key = VehicleRepairConfig.GetVehicle(VehicleId)
+    if Key <= 0 then
+        return false
+    end
+    local Map = GetVehicleBrokenMapForRead(PC)
+    return Map[Key] == true
+end
+
+local function SetMiningVehicleBroken(PC, VehicleId, bBroken)
+    local _, Key = VehicleRepairConfig.GetVehicle(VehicleId)
+    if Key <= 0 then
+        return 0
+    end
+    local Map = EnsureVehicleRepairBrokenMap(PC)
+    Map[Key] = bBroken == true
+    return Key
+end
+
+local function SyncVehicleRepairStateToClient(PC, VehicleId)
+    local _, Key = VehicleRepairConfig.GetVehicle(VehicleId)
+    if Key <= 0 then
+        return
+    end
+    InvokeClient(PC, "Client_VehicleRepairState", Key, IsMiningVehicleBroken(PC, Key) and 1 or 0)
+end
+
+local function NotifyVehicleRepair(PC, Msg)
+    InvokeClient(PC, "Client_VehicleRepairNotify", Msg)
+end
+
+local function EnsureVehicleRepairRandomSeed(PC, VehicleId)
+    if PC.bVehicleRepairRandomSeeded then
+        return
+    end
+    PC.bVehicleRepairRandomSeeded = true
+    math.randomseed(NowSec() + GetGoldCount(PC) + math.floor(tonumber(VehicleId) or 0) + 37)
+end
+
+function UGCPlayerController:GetVehicleRepairStatus(VehicleId)
+    local Vehicle, Key = VehicleRepairConfig.GetVehicle(VehicleId)
+    if Vehicle == nil then
+        Key = VehicleRepairConfig.GetFirstVehicleId()
+        Vehicle = VehicleRepairConfig.GetVehicle(Key)
+    end
+    Vehicle = Vehicle or {}
+    local ItemId = math.floor(tonumber(Vehicle.ItemId) or 0)
+    return {
+        bUnlocked = IsVehicleRepairUnlocked(self),
+        UnlockCost = VehicleRepairConfig.UnlockCost or 5000,
+        RepairCost = VehicleRepairConfig.RepairCost or 1000,
+        DamageChance = VehicleRepairConfig.DamageChance or 10,
+        GoldCount = GetGoldCount(self),
+        VehicleId = Key,
+        VehicleItemId = ItemId,
+        VehicleName = Vehicle.Name or "?",
+        RangeText = Vehicle.RangeText or "",
+        MineLevel = Vehicle.MineLevel or 0,
+        OwnedCount = GetItemCount(self, ItemId),
+        bBroken = IsMiningVehicleBroken(self, Key),
+        LastMsg = self.VehicleRepairLastMsg or "",
+    }
+end
+
+function UGCPlayerController:Client_VehicleRepairNotify(Msg)
+    Msg = tostring(Msg or "")
+    self.VehicleRepairLastMsg = Msg
+    ugcprint("[VehicleRepair] Notify: " .. Msg)
+    if self.OnVehicleRepairNotify then
+        pcall(self.OnVehicleRepairNotify, Msg)
+    end
+end
+
+function UGCPlayerController:Client_VehicleRepairUnlocked()
+    self.bVehicleRepairUnlocked = true
+    if self.OnVehicleRepairUnlocked then
+        pcall(self.OnVehicleRepairUnlocked)
+    end
+end
+
+function UGCPlayerController:Client_VehicleRepairState(VehicleId, bBroken)
+    local _, Key = VehicleRepairConfig.GetVehicle(VehicleId)
+    if Key <= 0 then
+        return
+    end
+    if self.ClientVehicleRepairBrokenMap == nil then
+        self.ClientVehicleRepairBrokenMap = {}
+    end
+    self.ClientVehicleRepairBrokenMap[Key] = (tonumber(bBroken) or 0) ~= 0
+    if self.OnVehicleRepairStateChanged then
+        pcall(self.OnVehicleRepairStateChanged, Key)
+    end
+end
+
+function UGCPlayerController:Server_UnlockVehicleRepair()
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    if IsVehicleRepairUnlocked(self) then
+        InvokeClient(self, "Client_VehicleRepairUnlocked")
+        NotifyVehicleRepair(self, "采矿车维修处已解锁")
+        return
+    end
+    local Cost = math.floor(tonumber(VehicleRepairConfig.UnlockCost) or 5000)
+    if not TryRemoveGold(self, Cost) then
+        NotifyVehicleRepair(self, "金币不足，解锁需要 " .. tostring(Cost))
+        return
+    end
+    self.bVehicleRepairUnlocked = true
+    ugcprint("[VehicleRepair] 采矿车维修处已解锁")
+    InvokeClient(self, "Client_VehicleRepairUnlocked")
+    NotifyVehicleRepair(self, "解锁成功！采矿车返程后可在这里检修")
+end
+
+function UGCPlayerController:Server_CheckVehicleReturn(VehicleId)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    if not IsVehicleRepairUnlocked(self) then
+        NotifyVehicleRepair(self, "请先解锁采矿车维修处（" .. tostring(VehicleRepairConfig.UnlockCost or 5000) .. " 金币）")
+        return
+    end
+    local Vehicle, Key = VehicleRepairConfig.GetVehicle(VehicleId)
+    if Vehicle == nil then
+        NotifyVehicleRepair(self, "采矿车类型无效")
+        return
+    end
+    if GetItemCount(self, Vehicle.ItemId) <= 0 then
+        NotifyVehicleRepair(self, "背包中没有" .. tostring(Vehicle.Name or "采矿车"))
+        return
+    end
+    if IsMiningVehicleBroken(self, Key) then
+        NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "已损坏，请先维修")
+        SyncVehicleRepairStateToClient(self, Key)
+        return
+    end
+    EnsureVehicleRepairRandomSeed(self, Key)
+    if VehicleRepairConfig.RollDamage() then
+        SetMiningVehicleBroken(self, Key, true)
+        SyncVehicleRepairStateToClient(self, Key)
+        NotifyVehicleRepair(self, "返程检查：" .. tostring(Vehicle.Name or "采矿车") .. "损坏了，需要维修")
+        return
+    end
+    SyncVehicleRepairStateToClient(self, Key)
+    NotifyVehicleRepair(self, "返程检查：" .. tostring(Vehicle.Name or "采矿车") .. "状态良好")
+end
+
+function UGCPlayerController:Server_RepairMiningVehicle(VehicleId)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    if not IsVehicleRepairUnlocked(self) then
+        NotifyVehicleRepair(self, "请先解锁采矿车维修处")
+        return
+    end
+    local Vehicle, Key = VehicleRepairConfig.GetVehicle(VehicleId)
+    if Vehicle == nil then
+        NotifyVehicleRepair(self, "采矿车类型无效")
+        return
+    end
+    if GetItemCount(self, Vehicle.ItemId) <= 0 then
+        NotifyVehicleRepair(self, "背包中没有" .. tostring(Vehicle.Name or "采矿车"))
+        return
+    end
+    if not IsMiningVehicleBroken(self, Key) then
+        NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "无需维修")
+        SyncVehicleRepairStateToClient(self, Key)
+        return
+    end
+    local Cost = math.floor(tonumber(VehicleRepairConfig.RepairCost) or 1000)
+    if not TryRemoveGold(self, Cost) then
+        NotifyVehicleRepair(self, "金币不足，维修需要 " .. tostring(Cost))
+        return
+    end
+    SetMiningVehicleBroken(self, Key, false)
+    SyncVehicleRepairStateToClient(self, Key)
+    NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "维修完成，消耗 " .. tostring(Cost) .. " 金币")
+end
+
+function UGCPlayerController:MarkMiningVehicleReturned(VehicleId)
+    if UGCGameSystem.IsServer() then
+        self:Server_CheckVehicleReturn(VehicleId)
+    else
+        self:RequestCheckVehicleReturn(VehicleId)
+    end
+end
+
+function UGCPlayerController:RequestUnlockVehicleRepair()
+    InvokeServer(self, "Server_UnlockVehicleRepair")
+end
+
+function UGCPlayerController:RequestCheckVehicleReturn(VehicleId)
+    InvokeServer(self, "Server_CheckVehicleReturn", VehicleId)
+end
+
+function UGCPlayerController:RequestRepairMiningVehicle(VehicleId)
+    InvokeServer(self, "Server_RepairMiningVehicle", VehicleId)
+end
+
 --- 矿石回收处：初始自动解锁，按策划价格表回收
 function UGCPlayerController:GetOreRecycleStatus(ItemId)
     ItemId = math.floor(tonumber(ItemId) or 0)
@@ -2185,6 +2466,7 @@ function UGCPlayerController:GetAvailableServerRPCs()
         "Server_UnlockSmeltingPlant", "Server_UpgradeSmeltingPlant", "Server_UnlockFurnace",
         "Server_StartSmelt", "Server_SkipSmelt", "Server_CollectSmelt",
         "Server_UnlockTalentMarket", "Server_HireTalentWorker", "Server_CollectTalentJob",
+        "Server_UnlockVehicleRepair", "Server_CheckVehicleReturn", "Server_RepairMiningVehicle",
         "Server_RecycleOre",
         "Server_UpgradeWarehouse"
 end
@@ -2197,13 +2479,14 @@ function UGCPlayerController:GetAvailableClientRPCs()
         "Client_SmeltNotify", "Client_SmelterUnlocked", "Client_SmelterPlantLevel",
         "Client_FurnaceCount", "Client_SmeltSlotSync",
         "Client_TalentMarketNotify", "Client_TalentMarketUnlocked", "Client_TalentJobSync",
+        "Client_VehicleRepairNotify", "Client_VehicleRepairUnlocked", "Client_VehicleRepairState",
         "Client_OreRecycleNotify",
         "Client_WarehouseNotify"
 end
 
 function UGCPlayerController:GetReplicatedProperties()
     return "bJadeShopUnlocked", "bMineTeleportUnlocked",
-        "bTalentMarketUnlocked",
+        "bTalentMarketUnlocked", "bVehicleRepairUnlocked",
         "bSmelterUnlocked", "SmelterPlantLevel", "UnlockedFurnaceCount"
 end
 

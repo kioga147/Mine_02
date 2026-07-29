@@ -1,6 +1,7 @@
 ---@class Advanced_MiningTruck_C:BP_UGC_MeleeWeap_Pan_C
 --Edit Below--
 local Advanced_MiningTruck = {}
+local VEHICLE_REPAIR_ID = 3
 
 local function GetPlayerPawnFromWeapon(Weapon)
     local Owner = Weapon:GetOwner()
@@ -40,12 +41,32 @@ local function GetPlayerPawnFromWeapon(Weapon)
     return nil
 end
 
+local function IsVehicleBroken(PlayerPawn)
+    if PlayerPawn == nil or PlayerPawn.GetController == nil then
+        return false
+    end
+    local Ok, PC = pcall(function()
+        return PlayerPawn:GetController()
+    end)
+    if not Ok or PC == nil or PC.GetVehicleRepairStatus == nil then
+        return false
+    end
+    local StatusOk, Status = pcall(function()
+        return PC:GetVehicleRepairStatus(VEHICLE_REPAIR_ID)
+    end)
+    return StatusOk and type(Status) == "table" and Status.bBroken == true
+end
+
 function Advanced_MiningTruck:ReceiveBeginPlay()
     Advanced_MiningTruck.SuperClass.ReceiveBeginPlay(self)
     
     local PlayerPawn = GetPlayerPawnFromWeapon(self)
     
     if PlayerPawn and PlayerPawn.SetMineCarMode then
+        if IsVehicleBroken(PlayerPawn) then
+            ugcprint("[矿车武器] 高级采矿车已损坏，阻止激活矿车模式")
+            return
+        end
         UGCAttributeSystem.SetGameAttributeValue(PlayerPawn, "AxeLevel", 5)
         
         if PlayerPawn.IsMineCarMode and PlayerPawn:IsMineCarMode() then

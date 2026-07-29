@@ -1,6 +1,7 @@
 ---@class Basic_MiningVehicle_C:Template_Melee_TangDao_Handle_C
 --Edit Below--
 local Basic_MiningVehicle = {} 
+local VEHICLE_REPAIR_ID = 1
 
 local function GetPlayerPawnFromItem(Item)
     if not Item then
@@ -71,8 +72,28 @@ local function GetPlayerPawnFromItem(Item)
     return nil
 end
 
+local function IsVehicleBroken(Player)
+    if Player == nil or Player.GetController == nil then
+        return false
+    end
+    local Ok, PC = pcall(function()
+        return Player:GetController()
+    end)
+    if not Ok or PC == nil or PC.GetVehicleRepairStatus == nil then
+        return false
+    end
+    local StatusOk, Status = pcall(function()
+        return PC:GetVehicleRepairStatus(VEHICLE_REPAIR_ID)
+    end)
+    return StatusOk and type(Status) == "table" and Status.bBroken == true
+end
+
 function Basic_MiningVehicle:CanUseV2()
     local Player = GetPlayerPawnFromItem(self)
+    if IsVehicleBroken(Player) then
+        ugcprint("[矿车物品] 初级采矿车已损坏，需要先维修")
+        return false
+    end
     if Player and Player.IsMineCarMode and Player:IsMineCarMode() then
         ugcprint("[矿车物品] 矿车模式已激活，无法重复使用")
         return false

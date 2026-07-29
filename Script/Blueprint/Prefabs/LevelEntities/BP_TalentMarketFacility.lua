@@ -95,6 +95,52 @@ local function SetText(Widget, Text)
     end
 end
 
+local function ColorToHexRGB(C)
+    local function Byte(V)
+        local N = math.floor((V or 0) * 255 + 0.5)
+        if N < 0 then N = 0 end
+        if N > 255 then N = 255 end
+        return string.format("%02X", N)
+    end
+    return Byte(C.R) .. Byte(C.G) .. Byte(C.B)
+end
+
+local function MakeSlateColor(C)
+    return {
+        SpecifiedColor = { R = C.R, G = C.G, B = C.B, A = C.A or 1 },
+        ColorUseRule = 0,
+    }
+end
+
+local function SetTextColor(Widget, C)
+    if not Widget or not C then
+        return
+    end
+    if Widget.SetColorRGBStr then
+        local Ok = pcall(function()
+            Widget:SetColorRGBStr(ColorToHexRGB(C))
+        end)
+        if Ok then
+            return
+        end
+    end
+    if Widget.SetColorAndOpacity then
+        pcall(function()
+            Widget:SetColorAndOpacity(MakeSlateColor(C))
+        end)
+    elseif Widget.ColorAndOpacity ~= nil then
+        Widget.ColorAndOpacity = MakeSlateColor(C)
+    end
+end
+
+local function FormatRemainingTime(Sec)
+    Sec = math.max(0, math.floor(tonumber(Sec) or 0))
+    if Sec >= 60 then
+        return string.format("%d分%02d秒", math.floor(Sec / 60), Sec % 60)
+    end
+    return tostring(Sec) .. "秒"
+end
+
 local function SetVisible(Widget, bShow)
     if not Widget or not Widget.SetVisibility then
         return
@@ -294,13 +340,17 @@ function BP_TalentMarketFacility:ApplyLabels(Widget, Status)
     elseif JobState == JOB_READY then
         MainTxt = "领取矿物"
     elseif JobState == JOB_RUNNING then
-        MainTxt = "矿工外出中"
+        MainTxt = "矿工外出中 " .. FormatRemainingTime(Status.RemainingSec)
     else
         MainTxt = string.format("雇佣%s (%d金)", WorkerName, tonumber(Status.HireCost) or 0)
     end
 
     SetText(GetW(Widget, "Txt_Unlock"), MainTxt)
-    SetText(GetW(Widget, "Txt_Quick"), "工人·" .. WorkerName)
+    if JobState == JOB_RUNNING then
+        SetText(GetW(Widget, "Txt_Quick"), "剩余·" .. FormatRemainingTime(Status.RemainingSec))
+    else
+        SetText(GetW(Widget, "Txt_Quick"), "工人·" .. WorkerName)
+    end
     SetText(GetW(Widget, "Txt_Manual"), "打开仓库")
     SetText(GetW(Widget, "Txt_Close"), "关闭")
 end
@@ -316,7 +366,7 @@ function BP_TalentMarketFacility:RefreshPromptUI()
         pcall(function()
             Widget:RefreshShopState({
                 bUnlocked = true,
-                JadeCount = 1,
+                JadeCount = 0,
                 GoldCount = tonumber(Status.GoldCount) or 0,
                 QuickCost = 0,
                 LastMsg = "",
@@ -353,7 +403,7 @@ function BP_TalentMarketFacility:RefreshPromptUI()
         Line = string.format(
             "人才市场 · %s挖矿中 · 剩余 %s",
             tostring(Status.JobWorkerName or "矿工"),
-            TalentMarketConfig.FormatDuration(Status.RemainingSec or 0)
+            FormatRemainingTime(Status.RemainingSec)
         )
     elseif JobState == JOB_READY then
         Line = string.format("人才市场 · %s已返回 · 可领取 %d 个矿物", tostring(Status.JobWorkerName or "矿工"), tonumber(Status.RewardTotal) or 0)
@@ -370,7 +420,9 @@ function BP_TalentMarketFacility:RefreshPromptUI()
     if Status.LastMsg and Status.LastMsg ~= "" then
         Line = Line .. "\n" .. tostring(Status.LastMsg)
     end
-    SetText(GetW(Widget, "Txt_Prompt"), Line)
+    local PromptText = GetW(Widget, "Txt_Prompt")
+    SetText(PromptText, Line)
+    SetTextColor(PromptText, { R = 0.08, G = 0.10, B = 0.12, A = 1 })
 end
 
 function BP_TalentMarketFacility:ShowPrompt()

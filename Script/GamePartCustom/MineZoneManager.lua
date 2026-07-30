@@ -13,13 +13,28 @@ do
     end
 end
 
+-- 引入掉落系统
+local MineTestDropConfig = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire("Script.Common.MineTestDropConfig")
+    end)
+    if Ok and type(Mod) == "table" then
+        MineTestDropConfig = Mod
+    end
+end
+
 local ORE_CLASS_CACHE = {}
 
 local ZONE_ACTORS = {}
 
 local RESPAWN_TIMERS = {}
 
+local _GROUP_RESPAWNING = {}
+
 local _bInitialized = false
+
+local _bAllZonesSpawned = false
 
 local _CachedWorldContext = nil
 
@@ -152,7 +167,6 @@ function MineZoneManager.RegisterOre(Actor, OreKey)
         MineZoneManager.Initialize()
     end
 
-    local location = nil
     local ok, loc = pcall(function()
         return Actor:K2_GetActorLocation()
     end)
@@ -160,9 +174,9 @@ function MineZoneManager.RegisterOre(Actor, OreKey)
         return
     end
 
-    local x = location.X
-    local y = location.Y
-    local z = location.Z
+    local x = loc.X
+    local y = loc.Y
+    local z = loc.Z
 
     local zoneId = MineZoneManager._FindZoneByPosition(x, y, z)
     if zoneId == nil then
@@ -200,13 +214,12 @@ function MineZoneManager.SpawnOreForRespawn(OreKey, X, Y, Z, ZoneId)
 
     local oreClass = MineZoneManager.GetOreClass(OreKey)
     if oreClass == nil then
-        ugcprint("[MineZoneManager] 矿石类未加载: " .. tostring(OreKey))
+        ugcprint(string.format("[MineZoneManager] ❌ 矿石类未加载: %s", tostring(OreKey)))
         return nil
     end
 
     local worldContext = MineZoneManager._GetWorldContext()
     if worldContext == nil then
-        ugcprint("[MineZoneManager] 无法获取WorldContext，跳过生成")
         return nil
     end
 
@@ -226,16 +239,9 @@ function MineZoneManager.SpawnOreForRespawn(OreKey, X, Y, Z, ZoneId)
     end)
 
     if ok and actor then
-        ugcprint(string.format(
-            "[MineZoneManager] 🔄 矿石重生: %s at (%.0f,%.0f,%.0f)",
-            tostring(OreKey), X, Y, Z
-        ))
         return actor
     else
-        ugcprint(string.format(
-            "[MineZoneManager] ⚠️ 矿石重生失败: %s at (%.0f,%.0f,%.0f)",
-            tostring(OreKey), X, Y, Z
-        ))
+        ugcprint(string.format("[MineZoneManager] ❌ 矿石生成失败: %s at (%.0f,%.0f,%.0f)", tostring(OreKey), X, Y, Z))
         return nil
     end
 end
@@ -250,6 +256,9 @@ function MineZoneManager.OnOreDestroyed(ZoneId, OreKey, Actor)
         return
     end
 
+    local respawnMode = MineZoneConfig and MineZoneConfig.GetRespawnMode(ZoneId) or "Individual"
+    local bAllAtOnce = (respawnMode == "AllAtOnce")
+
     local spawnInfo = nil
     if ZONE_ACTORS[ZoneId] then
         for i, entry in ipairs(ZONE_ACTORS[ZoneId]) do
@@ -262,10 +271,65 @@ function MineZoneManager.OnOreDestroyed(ZoneId, OreKey, Actor)
     end
 
     if spawnInfo == nil then
-        ugcprint("[MineZoneManager] 未找到矿石记录: ZoneId=" .. tostring(ZoneId))
         return
     end
 
+    local origX = spawnInfo.OriginalX or spawnInfo.X
+    local origY = spawnInfo.OriginalY or spawnInfo.Y
+    local origZ = spawnInfo.OriginalZ or spawnInfo.Z
+
+    -- 特殊掉落（玉矿石等）仍然独立处理
+    local bIsZoneOre = false
+    for _, oreEntry in ipairs(zone.OreDist or {}) do
+        if oreEntry.OreKey == OreKey then
+            bIsZoneOre = true
+            break
+        end
+    end
+
+    if bIsZoneOre then
+        local specialDrop = MineZoneConfig and MineZoneConfig.GetSpecialDrop(ZoneId)
+        if specialDrop and specialDrop.Chance and specialDrop.Chance > 0 then
+            local randomValue = math.random()
+            if randomValue < specialDrop.Chance then
+                ugcprint(string.format(
+                    "[MineZoneManager] ✨ 特殊掉落: %s (概率%.1f%%)",
+                    tostring(specialDrop.OreKey),
+                    specialDrop.Chance * 100
+                ))
+                MineZoneManager.SpawnOreForRespawn(
+                    specialDrop.OreKey, origX, origY, origZ, ZoneId
+                )
+            end
+        end
+    end
+
+    -- 非本矿区配置的矿石（如特殊掉落的奖励矿石）被挖取后不刷新
+    if not bIsZoneOre then
+        return
+    end
+
+    -- 全矿区集体刷新模式
+    if bAllAtOnce then
+        local remainingCount = MineZoneManager.GetZoneOreCount(ZoneId)
+        ugcprint(string.format("[MineZoneManager] 矿区%d剩余矿石: %d", ZoneId, remainingCount))
+
+        if remainingCount == 0 and not _GROUP_RESPAWNING[ZoneId] then
+            _GROUP_RESPAWNING[ZoneId] = true
+            local delay = MineZoneConfig and MineZoneConfig.GetRespawnDelay(ZoneId) or 1
+            ugcprint(string.format("[MineZoneManager] 矿区%s矿石已全部挖完，%.1f秒后集体刷新",
+                zone.Name or tostring(ZoneId), delay))
+
+            UGCTimerUtility.CreateLuaTimer(delay, function()
+                _GROUP_RESPAWNING[ZoneId] = nil
+                ugcprint(string.format("[MineZoneManager] 🔄 集体刷新矿区: %s", zone.Name or tostring(ZoneId)))
+                MineZoneManager.SpawnZoneOres(ZoneId)
+            end, false)
+        end
+        return
+    end
+
+    -- 独立刷新模式（原有逻辑）
     local respawnSec = 5
     for _, oreEntry in ipairs(zone.OreDist or {}) do
         if oreEntry.OreKey == OreKey then
@@ -275,24 +339,12 @@ function MineZoneManager.OnOreDestroyed(ZoneId, OreKey, Actor)
     end
 
     if respawnSec <= 0 then
-        respawnSec = 5
+        MineZoneManager.SpawnOreForRespawn(OreKey, origX, origY, origZ, ZoneId)
+        return
     end
-
-    ugcprint(string.format(
-        "[MineZoneManager] 💥 %s被采集 (%.0f,%.0f,%.0f) | %ds后重生",
-        tostring(OreKey),
-        spawnInfo.OriginalX or spawnInfo.X,
-        spawnInfo.OriginalY or spawnInfo.Y,
-        spawnInfo.OriginalZ or spawnInfo.Z,
-        respawnSec
-    ))
 
     local timerKey = string.format("respawn_%d_%s_%d", ZoneId, OreKey, os.time())
     RESPAWN_TIMERS[timerKey] = true
-
-    local origX = spawnInfo.OriginalX or spawnInfo.X
-    local origY = spawnInfo.OriginalY or spawnInfo.Y
-    local origZ = spawnInfo.OriginalZ or spawnInfo.Z
 
     UGCTimerUtility.CreateLuaTimer(respawnSec, function()
         if RESPAWN_TIMERS[timerKey] then
@@ -340,8 +392,69 @@ function MineZoneManager.Initialize()
 
     _bInitialized = true
 
-    ugcprint("[MineZoneManager] 矿区系统启动...")
     MineZoneManager.PreloadOreClasses()
+end
+
+-- 生成指定矿区的矿石
+function MineZoneManager.SpawnZoneOres(ZoneId)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+
+    if MineZoneConfig == nil then
+        return
+    end
+
+    local zone = MineZoneConfig.GetZone(ZoneId)
+    if zone == nil then
+        return
+    end
+
+    local positions = MineZoneConfig.GenerateSpawnPositions(ZoneId)
+    local spawnCount = 0
+    local failCount = 0
+
+    for _, posInfo in ipairs(positions) do
+        local actor = MineZoneManager.SpawnOreForRespawn(
+            posInfo.OreKey, posInfo.X, posInfo.Y, posInfo.Z, ZoneId
+        )
+        if actor then
+            MineZoneManager.RegisterOre(actor, posInfo.OreKey)
+            spawnCount = spawnCount + 1
+        else
+            failCount = failCount + 1
+        end
+    end
+
+    if failCount > 0 then
+        ugcprint(string.format(
+            "[MineZoneManager] 矿区%s: 成功=%d, 失败=%d",
+            zone.Name or "未知", spawnCount, failCount
+        ))
+    end
+end
+
+-- 生成所有矿区的矿石
+function MineZoneManager.SpawnAllZones()
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+
+    if not _bInitialized then
+        MineZoneManager.Initialize()
+    end
+
+    if _bAllZonesSpawned then
+        return
+    end
+    _bAllZonesSpawned = true
+
+    local zoneIds = MineZoneConfig and MineZoneConfig.GetZoneIds() or {}
+    for _, zoneId in ipairs(zoneIds) do
+        MineZoneManager.SpawnZoneOres(zoneId)
+    end
+
+    ugcprint("[MineZoneManager] ✅ 矿区矿石生成完成")
 end
 
 function MineZoneManager.GetZoneIdByActor(Actor)

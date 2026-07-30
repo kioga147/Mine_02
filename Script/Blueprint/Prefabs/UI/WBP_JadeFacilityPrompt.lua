@@ -130,23 +130,37 @@ function WBP_JadeFacilityPrompt:ApplyPromptLayout()
     end
 end
 
---- Status: { bUnlocked, JadeCount, GoldCount, UnlockCost, QuickCost, LastMsg }
+--- Status: { bUnlocked, JadeCount, GoldCount, UnlockCost, QuickCost, LastMsg, Mode, ZoneName, ReturnCost }
 function WBP_JadeFacilityPrompt:RefreshShopState(Status)
     Status = Status or {}
+    local Mode = tostring(Status.Mode or "jade")
     local bUnlocked = Status.bUnlocked == true
     local JadeCount = tonumber(Status.JadeCount) or 0
     local GoldCount = tonumber(Status.GoldCount) or 0
     local UnlockCost = tonumber(Status.UnlockCost) or 15000
     local QuickCost = tonumber(Status.QuickCost) or 3000
     local LastMsg = tostring(Status.LastMsg or "")
+    local ZoneName = tostring(Status.ZoneName or "矿区")
+    local ReturnCost = tonumber(Status.ReturnCost) or 0
 
     local Txt = GetW(self, "Txt_Prompt")
     if Txt and Txt.SetText then
         local Line
-        if not bUnlocked then
-            Line = string.format("玉石鉴定所 · 请先解锁（%d 金币，当前 %d）", UnlockCost, GoldCount)
+        if Mode == "teleport" then
+            if not bUnlocked then
+                Line = string.format("矿区传送大厅 · 请先解锁（%d 金币，当前 %d）", UnlockCost, GoldCount)
+            else
+                Line = string.format(
+                    "矿区传送大厅 · 当前矿区：%s · 传送 %d 金币 / 返回出生点 %d 金币（余额 %d）",
+                    ZoneName, QuickCost, ReturnCost, GoldCount
+                )
+            end
         else
-            Line = string.format("玉石鉴定所 · 请选择模式（玉石 x%d · 金币 %d）", JadeCount, GoldCount)
+            if not bUnlocked then
+                Line = string.format("玉石鉴定所 · 请先解锁（%d 金币，当前 %d）", UnlockCost, GoldCount)
+            else
+                Line = string.format("玉石鉴定所 · 请选择模式（玉石 x%d · 金币 %d）", JadeCount, GoldCount)
+            end
         end
         if LastMsg ~= "" then
             Line = Line .. "\n" .. LastMsg
@@ -155,31 +169,69 @@ function WBP_JadeFacilityPrompt:RefreshShopState(Status)
         SetPromptTextColor(Txt)
     end
 
-    -- 未解锁：只显示解锁 + 关闭；已解锁：快速 + 手动 + 关闭
-    SetVisible(GetW(self, "Btn_Unlock"), not bUnlocked)
-    SetVisible(GetW(self, "Gap_Unlock"), not bUnlocked)
-    SetVisible(GetW(self, "Btn_Quick"), bUnlocked)
-    SetVisible(GetW(self, "Gap_Quick"), bUnlocked)
-    SetVisible(GetW(self, "Btn_Manual"), bUnlocked)
-    SetVisible(GetW(self, "Gap_Manual"), bUnlocked)
-    SetVisible(GetW(self, "Btn_Close"), true)
-    SetVisible(GetW(self, "Gap_Close"), true)
+    if Mode == "teleport" then
+        -- 传送大厅布局（单行）：
+        -- 解锁 | 传送至矿区 | 切换矿区 | 返回出生点 | 关闭
+        SetVisible(GetW(self, "Btn_Unlock"), not bUnlocked)
+        SetVisible(GetW(self, "Gap_Unlock"), not bUnlocked)
+        SetVisible(GetW(self, "Btn_Quick"), bUnlocked)
+        SetVisible(GetW(self, "Gap_Quick"), bUnlocked)
+        SetVisible(GetW(self, "Btn_Manual"), bUnlocked)
+        SetVisible(GetW(self, "Gap_Manual"), bUnlocked)
+        SetVisible(GetW(self, "Btn_Enter"), bUnlocked)
+        SetVisible(GetW(self, "Gap_Enter"), bUnlocked)
+        SetVisible(GetW(self, "Btn_Close"), true)
+        SetVisible(GetW(self, "Gap_Close"), true)
 
-    local BtnUnlock = GetW(self, "Btn_Unlock")
-    if BtnUnlock and BtnUnlock.SetIsEnabled then
-        BtnUnlock:SetIsEnabled(GoldCount >= UnlockCost)
-    end
-    local BtnQuick = GetW(self, "Btn_Quick")
-    if BtnQuick and BtnQuick.SetIsEnabled then
-        BtnQuick:SetIsEnabled(JadeCount >= 1 and GoldCount >= QuickCost)
-    end
-    local BtnManual = GetW(self, "Btn_Manual")
-    if BtnManual and BtnManual.SetIsEnabled then
-        BtnManual:SetIsEnabled(JadeCount >= 1)
-    end
-    local BtnClose = GetW(self, "Btn_Close")
-    if BtnClose and BtnClose.SetIsEnabled then
-        BtnClose:SetIsEnabled(true)
+        local BtnUnlock = GetW(self, "Btn_Unlock")
+        if BtnUnlock and BtnUnlock.SetIsEnabled then
+            BtnUnlock:SetIsEnabled(GoldCount >= UnlockCost)
+        end
+        local BtnQuick = GetW(self, "Btn_Quick")
+        if BtnQuick and BtnQuick.SetIsEnabled then
+            BtnQuick:SetIsEnabled(GoldCount >= QuickCost)
+        end
+        local BtnManual = GetW(self, "Btn_Manual")
+        if BtnManual and BtnManual.SetIsEnabled then
+            BtnManual:SetIsEnabled(true)
+        end
+        local BtnEnter = GetW(self, "Btn_Enter")
+        if BtnEnter and BtnEnter.SetIsEnabled then
+            BtnEnter:SetIsEnabled(true)
+        end
+        local BtnClose = GetW(self, "Btn_Close")
+        if BtnClose and BtnClose.SetIsEnabled then
+            BtnClose:SetIsEnabled(true)
+        end
+    else
+        -- 玉石鉴定所布局
+        SetVisible(GetW(self, "Btn_Enter"), false)
+        SetVisible(GetW(self, "Gap_Enter"), false)
+        SetVisible(GetW(self, "Btn_Unlock"), not bUnlocked)
+        SetVisible(GetW(self, "Gap_Unlock"), not bUnlocked)
+        SetVisible(GetW(self, "Btn_Quick"), bUnlocked)
+        SetVisible(GetW(self, "Gap_Quick"), bUnlocked)
+        SetVisible(GetW(self, "Btn_Manual"), bUnlocked)
+        SetVisible(GetW(self, "Gap_Manual"), bUnlocked)
+        SetVisible(GetW(self, "Btn_Close"), true)
+        SetVisible(GetW(self, "Gap_Close"), true)
+
+        local BtnUnlock = GetW(self, "Btn_Unlock")
+        if BtnUnlock and BtnUnlock.SetIsEnabled then
+            BtnUnlock:SetIsEnabled(GoldCount >= UnlockCost)
+        end
+        local BtnQuick = GetW(self, "Btn_Quick")
+        if BtnQuick and BtnQuick.SetIsEnabled then
+            BtnQuick:SetIsEnabled(JadeCount >= 1 and GoldCount >= QuickCost)
+        end
+        local BtnManual = GetW(self, "Btn_Manual")
+        if BtnManual and BtnManual.SetIsEnabled then
+            BtnManual:SetIsEnabled(JadeCount >= 1)
+        end
+        local BtnClose = GetW(self, "Btn_Close")
+        if BtnClose and BtnClose.SetIsEnabled then
+            BtnClose:SetIsEnabled(true)
+        end
     end
 end
 
@@ -210,6 +262,10 @@ function WBP_JadeFacilityPrompt:Construct()
     if BtnManual and BtnManual.OnClicked then
         BtnManual.OnClicked:Add(self.OnManualClicked, self)
     end
+    local BtnEnter = GetW(self, "Btn_Enter")
+    if BtnEnter and BtnEnter.OnClicked then
+        BtnEnter.OnClicked:Add(self.OnEnterClicked, self)
+    end
     local BtnClose = GetW(self, "Btn_Close")
     if BtnClose and BtnClose.OnClicked then
         BtnClose.OnClicked:Add(self.OnCloseClicked, self)
@@ -221,6 +277,7 @@ function WBP_JadeFacilityPrompt:Destruct()
         { "Btn_Unlock", "OnUnlockClicked" },
         { "Btn_Quick", "OnQuickClicked" },
         { "Btn_Manual", "OnManualClicked" },
+        { "Btn_Enter", "OnEnterClicked" },
         { "Btn_Close", "OnCloseClicked" },
     }
     for _, Info in ipairs(pairsList) do
@@ -250,6 +307,12 @@ end
 function WBP_JadeFacilityPrompt:OnManualClicked()
     if self.Callbacks and self.Callbacks.OnManual then
         pcall(self.Callbacks.OnManual)
+    end
+end
+
+function WBP_JadeFacilityPrompt:OnEnterClicked()
+    if self.Callbacks and self.Callbacks.OnEnter then
+        pcall(self.Callbacks.OnEnter)
     end
 end
 

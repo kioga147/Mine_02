@@ -14,11 +14,11 @@ do
             UnlockCost = 8500,
             TeleportCost = 3000,
             Zones = {
-                [1] = { Name = "石滩", PadX = 20000, PadY = 28000, PadZ = 220 },
-                [2] = { Name = "煤矿场", PadX = 21000, PadY = 28000, PadZ = 220 },
-                [3] = { Name = "黄铜矿脉", PadX = 22000, PadY = 28000, PadZ = 220 },
-                [4] = { Name = "深层矿区", PadX = 20000, PadY = 29200, PadZ = 220 },
-                [5] = { Name = "宝石矿区", PadX = 21000, PadY = 29200, PadZ = 220 },
+                [1] = { Name = "石滩", PadX = 45000, PadY = 45000, PadZ = 220 },
+                [2] = { Name = "煤矿场", PadX = 40000, PadY = 28000, PadZ = 220 },
+                [3] = { Name = "黄铜矿脉", PadX = 20000, PadY = 8000, PadZ = 220 },
+                [4] = { Name = "深层矿区", PadX = 20000, PadY = 48000, PadZ = 220 },
+                [5] = { Name = "宝石矿区", PadX = 0, PadY = 28000, PadZ = 220 },
             },
             GetZone = function(ZoneId)
                 return MineTeleportConfig.Zones[tonumber(ZoneId) or 0]
@@ -427,59 +427,109 @@ local function IsMineTeleportUnlocked(PC)
 end
 
 local function TeleportPawnTo(PC, X, Y, Z)
+    ugcprint(string.format("[Teleport] 🔄 开始传送 (%.0f,%.0f,%.0f)", X, Y, Z))
+    
+    ugcprint("[Teleport] ① ForceStopMineCarMode...")
+    pcall(function()
+        local PawnStop = GetPawnByControllerSafe(PC)
+        if PawnStop and PawnStop.SetMineCarMode then
+            PawnStop:SetMineCarMode(false)
+        end
+    end)
+    ugcprint("[Teleport] ① ForceStopMineCarMode 完成")
+
     local Pawn = nil
+    ugcprint("[Teleport] ② 尝试获取 Pawn...")
     if PC then
         if PC.GetPlayerCharacterSafety then
             local Ok, P = pcall(function()
                 return PC:GetPlayerCharacterSafety()
             end)
-            if Ok then
-                Pawn = P
-            end
+            ugcprint(string.format("[Teleport] ②a GetPlayerCharacterSafety: Ok=%s, Pawn=%s", tostring(Ok), tostring(P)))
+            if Ok then Pawn = P end
         end
         if Pawn == nil and PC.K2_GetPawn then
             local Ok, P = pcall(function()
                 return PC:K2_GetPawn()
             end)
-            if Ok then
-                Pawn = P
-            end
+            ugcprint(string.format("[Teleport] ②b K2_GetPawn: Ok=%s, Pawn=%s", tostring(Ok), tostring(P)))
+            if Ok then Pawn = P end
         end
     end
     if Pawn == nil and UGCGameSystem and UGCGameSystem.GetPlayerPawn then
         local Ok, P = pcall(UGCGameSystem.GetPlayerPawn, PC)
-        if Ok then
-            Pawn = P
-        end
+        ugcprint(string.format("[Teleport] ②c GetPlayerPawn: Ok=%s, Pawn=%s", tostring(Ok), tostring(P)))
+        if Ok then Pawn = P end
     end
     if Pawn == nil then
+        ugcprint("[Teleport] ❌ 找不到 Pawn")
         return false
     end
+    ugcprint(string.format("[Teleport] ② Pawn 获取成功: %s", tostring(Pawn)))
 
-    local Loc = { X = X, Y = Y, Z = Z }
-    if Vector and Vector.New then
-        Loc = Vector.New(X, Y, Z)
-    elseif FVector then
-        Loc = FVector(X, Y, Z)
-    end
+    pcall(function()
+        if Pawn.SetMineCarMode then Pawn:SetMineCarMode(false) end
+    end)
 
-    local Ok = false
+    local Loc = Vector.New(X, Y, Z)
+    ugcprint(string.format("[Teleport] ③ 目标位置: %s", tostring(Loc)))
+
+    -- 方案1: K2_TeleportTo (仅2个参数: DestLocation, DestRotation)
     if Pawn.K2_TeleportTo then
-        Ok = pcall(function()
+        ugcprint("[Teleport] 尝试 K2_TeleportTo(2参数)")
+        local Ok1, Err1 = pcall(function()
             Pawn:K2_TeleportTo(Loc, Pawn:K2_GetActorRotation())
         end)
+        ugcprint(string.format("[Teleport] K2_TeleportTo: Ok=%s, Err=%s", tostring(Ok1), tostring(Err1)))
+        if Ok1 then
+            local curLoc = Pawn:K2_GetActorLocation()
+            if curLoc and math.abs(curLoc.X - X) < 100 then
+                ugcprint("[Teleport] ✅ K2_TeleportTo 成功")
+                return true
+            else
+                ugcprint(string.format("[Teleport] K2_TeleportTo 位置不匹配: curX=%.0f, expected=%.0f",
+                    curLoc and curLoc.X or 0, X))
+            end
+        end
     end
-    if not Ok and Pawn.K2_SetActorLocation then
-        Ok = pcall(function()
-            Pawn:K2_SetActorLocation(Loc, false, nil, true)
+
+    -- 方案2: K2_SetActorLocation (3参数: NewLocation, bSweep, SweepHitResult)
+    if Pawn.K2_SetActorLocation then
+        ugcprint("[Teleport] 尝试 K2_SetActorLocation(3参数)")
+        local Ok2, Err2 = pcall(function()
+            Pawn:K2_SetActorLocation(Loc, false, nil)
         end)
+        ugcprint(string.format("[Teleport] K2_SetActorLocation: Ok=%s, Err=%s", tostring(Ok2), tostring(Err2)))
+        if Ok2 then
+            local curLoc = Pawn:K2_GetActorLocation()
+            if curLoc and math.abs(curLoc.X - X) < 100 then
+                ugcprint("[Teleport] ✅ K2_SetActorLocation 成功")
+                return true
+            else
+                ugcprint(string.format("[Teleport] K2_SetActorLocation 位置不匹配: curX=%.0f, expected=%.0f",
+                    curLoc and curLoc.X or 0, X))
+            end
+        end
     end
-    if not Ok and Pawn.SetActorLocation then
-        Ok = pcall(function()
+
+    -- 方案3: SetActorLocation (UE 原生, 可能不存在)
+    if Pawn.SetActorLocation then
+        ugcprint("[Teleport] 尝试 SetActorLocation")
+        local Ok3, Err3 = pcall(function()
             Pawn:SetActorLocation(Loc)
         end)
+        ugcprint(string.format("[Teleport] SetActorLocation: Ok=%s, Err=%s", tostring(Ok3), tostring(Err3)))
+        if Ok3 then
+            local curLoc = Pawn:K2_GetActorLocation()
+            if curLoc and math.abs(curLoc.X - X) < 100 then
+                ugcprint("[Teleport] ✅ SetActorLocation 成功")
+                return true
+            end
+        end
     end
-    return Ok and true or false
+
+    ugcprint("[Teleport] ❌ 所有方案均失败")
+    return false
 end
 
 --- 与 WBP_JadeAppraisal 价值公式一致（仅服务端记账）
@@ -1110,6 +1160,7 @@ function UGCPlayerController:GetMineTeleportStatus()
         GoldCount = GetGoldCount(self),
         UnlockCost = MINE_TELEPORT_UNLOCK_COST,
         TeleportCost = MINE_TELEPORT_COST,
+        ReturnCost = 0,
         LastMsg = self.MineTeleportLastMsg or "",
     }
 end
@@ -1152,12 +1203,15 @@ end
 
 function UGCPlayerController:Server_TeleportToMineZone(ZoneId)
     ZoneId = math.floor(tonumber(ZoneId) or 0)
+    ugcprint(string.format("[MineTeleport] 📥 收到传送请求: ZoneId=%d", ZoneId))
     local Zone = MineTeleportConfig.GetZone(ZoneId)
     if Zone == nil then
+        ugcprint("[MineTeleport] ❌ 无效矿区 ID: " .. tostring(ZoneId))
         UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportNotify", "无效矿区")
         return
     end
     if not IsMineTeleportUnlocked(self) then
+        ugcprint("[MineTeleport] ❌ 传送大厅未解锁")
         UnrealNetwork.CallUnrealRPC(
             self, self, "Client_MineTeleportNotify",
             "请先解锁传送大厅（" .. tostring(MINE_TELEPORT_UNLOCK_COST) .. " 金币）"
@@ -1165,6 +1219,7 @@ function UGCPlayerController:Server_TeleportToMineZone(ZoneId)
         return
     end
     if GetGoldCount(self) < MINE_TELEPORT_COST then
+        ugcprint("[MineTeleport] ❌ 金币不足: " .. tostring(GetGoldCount(self)))
         UnrealNetwork.CallUnrealRPC(
             self, self, "Client_MineTeleportNotify",
             "金币不足，传送需要 " .. tostring(MINE_TELEPORT_COST)
@@ -1172,16 +1227,25 @@ function UGCPlayerController:Server_TeleportToMineZone(ZoneId)
         return
     end
     if not TryRemoveGold(self, MINE_TELEPORT_COST) then
+        ugcprint("[MineTeleport] ❌ 扣费失败")
         UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportNotify", "扣费失败")
         return
     end
+    ugcprint(string.format("[MineTeleport] ⚡ 传送至 %s (%.0f,%.0f,%.0f)",
+        Zone.Name, Zone.PadX, Zone.PadY, Zone.PadZ))
+
+    -- 优先通过客户端 RPC 执行传送（listen-server 下客户端拥有移动权限）
+    ugcprint("[MineTeleport] 📤 发送 Client_ExecuteTeleport RPC")
+    UnrealNetwork.CallUnrealRPC(
+        self, self, "Client_ExecuteTeleport",
+        Zone.PadX, Zone.PadY, Zone.PadZ
+    )
+
+    -- 同时在服务端也尝试传送（双保险）
     local Ok = TeleportPawnTo(self, Zone.PadX, Zone.PadY, Zone.PadZ)
-    if not Ok then
-        UGCBackpackSystemV2.AddItemV2(self, GOLD_ITEM_ID, MINE_TELEPORT_COST)
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportNotify", "传送失败，已退回费用")
-        return
-    end
-    ugcprint("[MineTeleport] 传送至 " .. tostring(Zone.Name) .. " (" .. tostring(ZoneId) .. ")")
+    ugcprint(string.format("[MineTeleport] TeleportPawnTo 返回: %s", tostring(Ok)))
+
+    ugcprint(string.format("[MineTeleport] ✅ 传送流程完成至 %s", Zone.Name))
     UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleported", ZoneId)
     UnrealNetwork.CallUnrealRPC(
         self, self, "Client_MineTeleportNotify",
@@ -1190,10 +1254,67 @@ function UGCPlayerController:Server_TeleportToMineZone(ZoneId)
 end
 
 function UGCPlayerController:Client_MineTeleported(ZoneId)
-    ZoneId = math.floor(tonumber(ZoneId) or 0)
+    ZoneId = math.floor(ZoneId or 0)
+    ugcprint(string.format("[MineTeleport] 客户端收到传送完成: ZoneId=%d", ZoneId))
     if self.OnMineTeleported then
         pcall(self.OnMineTeleported, ZoneId)
     end
+end
+
+function UGCPlayerController:Client_ExecuteTeleport(X, Y, Z)
+    X = tonumber(X) or 0
+    Y = tonumber(Y) or 0
+    Z = tonumber(Z) or 0
+    ugcprint(string.format("[Teleport-Client] 🚀 客户端执行传送 (%.0f,%.0f,%.0f)", X, Y, Z))
+
+    local Pawn = nil
+    if self.GetPlayerCharacterSafety then
+        local Ok, P = pcall(function() return self:GetPlayerCharacterSafety() end)
+        if Ok then Pawn = P end
+    end
+    if Pawn == nil and self.K2_GetPawn then
+        local Ok, P = pcall(function() return self:K2_GetPawn() end)
+        if Ok then Pawn = P end
+    end
+    if Pawn == nil then
+        ugcprint("[Teleport-Client] ❌ 客户端找不到 Pawn")
+        return
+    end
+
+    local Loc = Vector.New(X, Y, Z)
+    ugcprint(string.format("[Teleport-Client] Pawn=%s, Loc=%s", tostring(Pawn), tostring(Loc)))
+
+    if Pawn.K2_TeleportTo then
+        ugcprint("[Teleport-Client] 尝试 K2_TeleportTo(2参数)")
+        local Ok, Err = pcall(function()
+            Pawn:K2_TeleportTo(Loc, Pawn:K2_GetActorRotation())
+        end)
+        ugcprint(string.format("[Teleport-Client] K2_TeleportTo: Ok=%s, Err=%s", tostring(Ok), tostring(Err)))
+        if Ok then
+            local curLoc = Pawn:K2_GetActorLocation()
+            if curLoc and math.abs(curLoc.X - X) < 100 then
+                ugcprint("[Teleport-Client] ✅ 客户端传送成功")
+                return
+            end
+        end
+    end
+
+    if Pawn.K2_SetActorLocation then
+        ugcprint("[Teleport-Client] 尝试 K2_SetActorLocation")
+        local Ok, Err = pcall(function()
+            Pawn:K2_SetActorLocation(Loc, false, nil)
+        end)
+        ugcprint(string.format("[Teleport-Client] K2_SetActorLocation: Ok=%s, Err=%s", tostring(Ok), tostring(Err)))
+        if Ok then
+            local curLoc = Pawn:K2_GetActorLocation()
+            if curLoc and math.abs(curLoc.X - X) < 100 then
+                ugcprint("[Teleport-Client] ✅ 客户端传送成功(方案2)")
+                return
+            end
+        end
+    end
+
+    ugcprint("[Teleport-Client] ❌ 客户端传送失败")
 end
 
 function UGCPlayerController:RequestUnlockMineTeleport()
@@ -1201,7 +1322,57 @@ function UGCPlayerController:RequestUnlockMineTeleport()
 end
 
 function UGCPlayerController:RequestTeleportToMineZone(ZoneId)
+    ugcprint(string.format("[MineTeleport] 📤 发送RPC请求: Server_TeleportToMineZone(%d)", ZoneId))
     UnrealNetwork.CallUnrealRPC(self, self, "Server_TeleportToMineZone", ZoneId)
+end
+
+function UGCPlayerController:RequestReturnToSpawn()
+    ugcprint("[MineTeleport] 📤 发送RPC请求: Server_ReturnToSpawn")
+    UnrealNetwork.CallUnrealRPC(self, self, "Server_ReturnToSpawn")
+end
+
+function UGCPlayerController:Server_ReturnToSpawn()
+    ugcprint("[MineTeleport] 🏠 收到返回出生点请求")
+
+    if not IsMineTeleportUnlocked(self) then
+        ugcprint("[MineTeleport] ❌ 传送大厅未解锁，无法返回出生点")
+        UnrealNetwork.CallUnrealRPC(
+            self, self, "Client_MineTeleportNotify",
+            "请先解锁传送大厅"
+        )
+        return
+    end
+
+    local spawnPoint = MineTeleportConfig.GetSpawnPoint()
+    local sx = spawnPoint and spawnPoint.X or 0
+    local sy = spawnPoint and spawnPoint.Y or 0
+    local sz = spawnPoint and spawnPoint.Z or 220
+
+    ugcprint(string.format("[MineTeleport] 🏠 返回出生点 (%.0f,%.0f,%.0f) - 免费", sx, sy, sz))
+
+    -- 客户端 RPC 执行传送
+    ugcprint("[MineTeleport] 📤 发送 Client_ExecuteTeleport RPC")
+    UnrealNetwork.CallUnrealRPC(
+        self, self, "Client_ExecuteTeleport", sx, sy, sz
+    )
+
+    -- 服务端也尝试传送
+    local Ok = TeleportPawnTo(self, sx, sy, sz)
+    ugcprint(string.format("[MineTeleport] TeleportPawnTo 返回: %s", tostring(Ok)))
+
+    ugcprint("[MineTeleport] ✅ 返回出生点完成")
+    UnrealNetwork.CallUnrealRPC(self, self, "Client_MineReturnedToSpawn")
+    UnrealNetwork.CallUnrealRPC(
+        self, self, "Client_MineTeleportNotify",
+        "已返回出生点"
+    )
+end
+
+function UGCPlayerController:Client_MineReturnedToSpawn()
+    ugcprint("[MineTeleport] 客户端收到返回出生点完成")
+    if self.OnMineReturnedToSpawn then
+        pcall(self.OnMineReturnedToSpawn)
+    end
 end
 
 --- ========== 矿石加工厂 / 冶炼 ==========
@@ -2792,7 +2963,7 @@ end
 function UGCPlayerController:GetAvailableServerRPCs()
     return "Server_SellAppraisedJade", "Server_UnlockJadeShop", "Server_QuickAppraiseJade",
         "Server_BeginManualAppraisal", "Server_RevealJadeCell", "Server_CancelManualAppraisal",
-        "Server_UnlockMineTeleport", "Server_TeleportToMineZone",
+        "Server_UnlockMineTeleport", "Server_TeleportToMineZone", "Server_ReturnToSpawn",
         "Server_UnlockSmeltingPlant", "Server_UpgradeSmeltingPlant", "Server_UnlockFurnace",
         "Server_StartSmelt", "Server_SkipSmelt", "Server_CollectSmelt",
         "Server_RecycleOre","Server_UpgradeWarehouse","Server_BuyTool","Server_UpgradeBackpack"
@@ -2803,6 +2974,8 @@ function UGCPlayerController:GetAvailableClientRPCs()
         "Client_JadeShopNotify", "Client_JadeShopUnlocked", "Client_JadeQuickResult",
         "Client_JadeCellRevealed",
         "Client_MineTeleportNotify", "Client_MineTeleportUnlocked", "Client_MineTeleported",
+        "Client_MineTeleportHallEntered", "Client_MineTeleportHallLeft",
+        "Client_ExecuteTeleport", "Client_MineReturnedToSpawn",
         "Client_SmeltNotify", "Client_SmelterUnlocked", "Client_SmelterPlantLevel",
         "Client_FurnaceCount", "Client_SmeltSlotSync",
         "Client_TalentMarketNotify", "Client_TalentMarketUnlocked", "Client_TalentJobSync",

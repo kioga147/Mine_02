@@ -1,0 +1,17 @@
+* text=auto
+
+*.lua text eol=lf
+*.ini text eol=crlf
+*.json text eol=lf
+*.md text eol=lf
+*.txt text eol=crlf
+*.html text eol=lf
+*.ugcproj text eol=crlf
+
+*.uasset binary
+*.umap binary
+*.navmesh binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary

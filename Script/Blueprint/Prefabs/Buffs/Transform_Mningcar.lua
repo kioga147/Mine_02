@@ -12,6 +12,54 @@ local Transform_Mningcar = {
     RestoreTargetLocation = {},
 }
 
+local MINE_CAR_SKILL_PATHS = {
+    "Asset/Blueprint/Prefabs/Skills/BasicVehicle.BasicVehicle_C",
+    "Asset/Blueprint/Prefabs/Skills/MidVehicle.MidVehicle_C",
+    "Asset/Blueprint/Prefabs/Skills/MaxVehicle.MaxVehicle_C",
+}
+
+local function LoadMineCarSkillClass(SkillPath)
+    if UGCObjectUtility and UGCObjectUtility.LoadClass and UGCGameSystem and UGCGameSystem.GetUGCResourcesFullPath then
+        local Ok, FullPath = pcall(UGCGameSystem.GetUGCResourcesFullPath, SkillPath)
+        if Ok and FullPath then
+            local LoadOk, SkillClass = pcall(UGCObjectUtility.LoadClass, FullPath)
+            if LoadOk and SkillClass then
+                return SkillClass
+            end
+        end
+    end
+    return SkillPath
+end
+
+local function RemoveSkillInstanceSafe(OwnerActor, Skill)
+    if OwnerActor == nil or Skill == nil then
+        return
+    end
+    local Removed = false
+    if UGCPersistEffectSystem and UGCPersistEffectSystem.RemoveSkillInstance then
+        local Ok = pcall(UGCPersistEffectSystem.RemoveSkillInstance, OwnerActor, Skill)
+        Removed = Ok
+    end
+    if not Removed and Skill.Cancel then
+        pcall(Skill.Cancel, Skill, EPersistEffectUnApplyReason.Normal)
+    end
+end
+
+local function RemoveMineCarSkills(OwnerActor)
+    if OwnerActor == nil or UGCPersistEffectSystem == nil then
+        return
+    end
+    for _, SkillPath in ipairs(MINE_CAR_SKILL_PATHS) do
+        local SkillClass = LoadMineCarSkillClass(SkillPath)
+        local Ok, Skills = pcall(UGCPersistEffectSystem.GetSkillsByClass, OwnerActor, SkillClass)
+        if Ok and type(Skills) == "table" then
+            for _, Skill in ipairs(Skills) do
+                RemoveSkillInstanceSafe(OwnerActor, Skill)
+            end
+        end
+    end
+end
+
 TransformMeshAndAnimType = UE.LoadEnum("/Game/UGC/UGCGame/Buff/BuffTemplate/Transform/TransformMeshAndAnimType")
 TransformStaticMeshCollisionType = UE.LoadEnum("/Game/UGC/UGCGame/Buff/BuffTemplate/Transform/TransformStaticMeshCollisionType")
 
@@ -132,6 +180,8 @@ function Transform_Mningcar:InitSkill()
 		return
 	end
 
+    RemoveMineCarSkills(self:GetOwnerActor())
+
     for _, SkillClass in pairs(self.ApplySkills) do
         local Skill = UGCPersistEffectSystem.AddSkillByClass(self:GetOwnerActor(), SkillClass)
         table.insert(self.CachedAppliedSkill, Skill)
@@ -162,13 +212,10 @@ function Transform_Mningcar:ReapplyCurrentWeaponSkills()
         if #ExistSkills == 0 then
             local Skill = UGCPersistEffectSystem.AddSkillByClass(PlayerPawn, SkillClass, -1)
             if Skill then
+                table.insert(self.CachedAppliedSkill, Skill)
                 ugcprint("[矿车变身] ✅ 成功添加BasicVehicle技能")
                 table.insert(self.CachedAppliedSkill, Skill)
                 
-                if Skill.OnApply_BP then
-                    pcall(Skill.OnApply_BP, Skill)
-                    ugcprint("[矿车变身] ✅ 已调用OnApply_BP")
-                end
             else
                 ugcprint("[矿车变身] ❌ 添加技能失败")
             end
@@ -199,12 +246,14 @@ end
 
 
 function Transform_Mningcar:RestoreSkill()
+    local OwnerActor = self:GetOwnerActor()
     for _, PE in pairs(self.CachedAppliedSkill) do
         if UE.IsValid(PE) then
-            PE:Cancel(EPersistEffectUnApplyReason.Normal)
+            RemoveSkillInstanceSafe(OwnerActor, PE)
         end
     end
     self.CachedAppliedSkill = {}
+    RemoveMineCarSkills(OwnerActor)
 end
 
 

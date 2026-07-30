@@ -1,6 +1,7 @@
----@class BP_OreSmeltingFacility_C:AActor
----@field BuildingMesh UStaticMeshComponent
+---@class BP_JadeAppraisalFacility_C:AActor
+---@field PromptAnchor USceneComponent
 ---@field InteractTrigger USphereComponent
+---@field BuildingMesh UStaticMeshComponent
 ---@field DefaultSceneRoot1 USceneComponent
 ---@field DefaultSceneRoot USceneComponent
 --Edit Below--
@@ -190,13 +191,9 @@ function BP_OreSmeltingFacility:ReceiveBeginPlay()
     self.bOverlapBound = true
 
     pcall(function()
-        if Trigger.SetGenerateOverlapEvents then
-            Trigger:SetGenerateOverlapEvents(true)
-        else
-            Trigger.bGenerateOverlapEvents = true
-        end
+        Trigger.bGenerateOverlapEvents = true
         if Trigger.SetSphereRadius then
-            Trigger:SetSphereRadius(280)
+            Trigger:SetSphereRadius(280, true)
         elseif Trigger.SphereRadius ~= nil then
             Trigger.SphereRadius = 280
         end

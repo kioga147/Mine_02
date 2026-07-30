@@ -2,6 +2,7 @@
 ---@field BuffClassTable ULuaArrayHelper<UClass>
 ---@field BuffClassTable1 ULuaArrayHelper<UClass>
 --Edit Below--
+-- 合并冲突解决：保留 codex/talent-market-facility 分支版本
 local MineTeleportConfig = nil
 do
     local Ok, Mod = pcall(function()

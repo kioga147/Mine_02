@@ -10,6 +10,7 @@ local Diamond_mine = {
 
 UGCGameSystem.UGCRequire('Script.GameAttribute.game_attribute_type')
 local MiningSystem = UGCGameSystem.UGCRequire('Script.GamePartCustom.MiningSystem')
+local MineTestDropConfig = UGCGameSystem.UGCRequire('Script.Common.MineTestDropConfig')
 local MineZoneManager = nil
 do
     local Ok, Mod = pcall(function()
@@ -99,6 +100,7 @@ function Diamond_mine:BPDie(KillingDamage, EventInstigator,DamageCauser,DamageEv
             MineZoneManager.OnOreDestroyed(zoneId, oreKey, self)
         end
     end
+    MineTestDropConfig.GiveTestGold(EventInstigator)
     self.UGCPresetCommonDropItemComponent:StartDrop(self, EventInstigator, {})
 end
 

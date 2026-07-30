@@ -15,25 +15,15 @@ do
             TeleportCost = 3000,
             Zones = {
                 [1] = { Name = "石滩", PadX = 20000, PadY = 28000, PadZ = 220 },
-                [2] = { Name = "煤矿场", PadX = 40000, PadY = 28000, PadZ = 220 },
-                [3] = { Name = "黄铜矿脉", PadX = 20000, PadY = 8000, PadZ = 220 },
-                [4] = { Name = "深层矿区", PadX = 20000, PadY = 48000, PadZ = 220 },
-                [5] = { Name = "宝石矿区", PadX = 0, PadY = 28000, PadZ = 220 },
+                [2] = { Name = "煤矿场", PadX = 21000, PadY = 28000, PadZ = 220 },
+                [3] = { Name = "黄铜矿脉", PadX = 22000, PadY = 28000, PadZ = 220 },
+                [4] = { Name = "深层矿区", PadX = 20000, PadY = 29200, PadZ = 220 },
+                [5] = { Name = "宝石矿区", PadX = 21000, PadY = 29200, PadZ = 220 },
             },
             GetZone = function(ZoneId)
                 return MineTeleportConfig.Zones[tonumber(ZoneId) or 0]
             end,
         }
-    end
-end
-
-local MineZoneManager = nil
-do
-    local Ok, Mod = pcall(function()
-        return UGCGameSystem.UGCRequire("Script.GamePartCustom.MineZoneManager")
-    end)
-    if Ok and type(Mod) == "table" then
-        MineZoneManager = Mod
     end
 end
 
@@ -338,6 +328,27 @@ do
     end
 end
 
+
+local ShopConfig = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire("Script.Common.ShopConfig")
+    end)
+    if Ok and type(Mod) == "table" then
+        ShopConfig = Mod
+    else
+        ShopConfig = {
+            GoldItemId = 8310002,
+            Tools = {},
+            BackpackLevels = {},
+            GetTool = function() return nil end,
+            GetToolCount = function() return 0 end,
+            GetBackpackLevel = function() return nil end,
+            GetMaxBackpackLevel = function() return 0 end,
+        }
+    end
+end
+
 -- 玉石鉴定逻辑对齐 TESTWK；物品 ID 使用 Mine_02 现有表：
 -- 8310011 = 玉矿石（未鉴定） Mine_10
 -- 8310018 = 玉石 Mine_17（兼容；当前与 8310011 同为可鉴定原料，鉴定出售直接发金币、不产出 8310018）
@@ -416,64 +427,59 @@ local function IsMineTeleportUnlocked(PC)
 end
 
 local function TeleportPawnTo(PC, X, Y, Z)
-    if PC == nil then
-        return false
-    end
-
-    local Ok = false
-
-    if UGCPlayerControllerSystem and UGCPlayerControllerSystem.TeleportTo then
-        Ok = pcall(function()
-            UGCPlayerControllerSystem.TeleportTo(PC, X, Y, Z)
-        end)
-        if Ok then
-            return true
+    local Pawn = nil
+    if PC then
+        if PC.GetPlayerCharacterSafety then
+            local Ok, P = pcall(function()
+                return PC:GetPlayerCharacterSafety()
+            end)
+            if Ok then
+                Pawn = P
+            end
+        end
+        if Pawn == nil and PC.K2_GetPawn then
+            local Ok, P = pcall(function()
+                return PC:K2_GetPawn()
+            end)
+            if Ok then
+                Pawn = P
+            end
         end
     end
-
-    local Pawn = nil
-    if PC.GetPlayerCharacterSafety then
-        local OkP, P = pcall(function()
-            return PC:GetPlayerCharacterSafety()
-        end)
-        if OkP then Pawn = P end
-    end
-    if Pawn == nil and PC.K2_GetPawn then
-        local OkP, P = pcall(function()
-            return PC:K2_GetPawn()
-        end)
-        if OkP then Pawn = P end
-    end
     if Pawn == nil and UGCGameSystem and UGCGameSystem.GetPlayerPawn then
-        local OkP, P = pcall(UGCGameSystem.GetPlayerPawn, PC)
-        if OkP then Pawn = P end
+        local Ok, P = pcall(UGCGameSystem.GetPlayerPawn, PC)
+        if Ok then
+            Pawn = P
+        end
     end
     if Pawn == nil then
         return false
     end
 
-    local Loc = Vector and Vector.New(X, Y, Z) or (FVector and FVector(X, Y, Z) or { X = X, Y = Y, Z = Z })
+    local Loc = { X = X, Y = Y, Z = Z }
+    if Vector and Vector.New then
+        Loc = Vector.New(X, Y, Z)
+    elseif FVector then
+        Loc = FVector(X, Y, Z)
+    end
 
+    local Ok = false
     if Pawn.K2_TeleportTo then
         Ok = pcall(function()
             Pawn:K2_TeleportTo(Loc, Pawn:K2_GetActorRotation())
         end)
-        if Ok then return true end
     end
     if not Ok and Pawn.K2_SetActorLocation then
         Ok = pcall(function()
             Pawn:K2_SetActorLocation(Loc, false, nil, true)
         end)
-        if Ok then return true end
     end
     if not Ok and Pawn.SetActorLocation then
         Ok = pcall(function()
             Pawn:SetActorLocation(Loc)
         end)
-        if Ok then return true end
     end
-
-    return false
+    return Ok and true or false
 end
 
 --- 与 WBP_JadeAppraisal 价值公式一致（仅服务端记账）
@@ -556,7 +562,9 @@ end
 
 function UGCPlayerController:ReceiveBeginPlay()
     UGCPlayerController.SuperClass.ReceiveBeginPlay(self)
-
+    if self.BackpackLevel == nil then
+        self.BackpackLevel = 1
+    end
     if self.bJadeShopUnlocked == nil then
         self.bJadeShopUnlocked = false
     end
@@ -584,29 +592,23 @@ function UGCPlayerController:ReceiveBeginPlay()
     if self.ClientSmeltSlots == nil then
         self.ClientSmeltSlots = {}
     end
-    if self.VehicleRepairBrokenMap == nil then
-        self.VehicleRepairBrokenMap = {}
-    end
-    if self.VehicleRepairStateMap == nil then
-        self.VehicleRepairStateMap = {}
-    end
-    if self.ClientVehicleRepairBrokenMap == nil then
-        self.ClientVehicleRepairBrokenMap = {}
-    end
-    if self.ClientVehicleRepairStateMap == nil then
-        self.ClientVehicleRepairStateMap = {}
-    end
-    if self.ActiveMiningVehicleId == nil then
-        self.ActiveMiningVehicleId = 0
-    end
+
     ClearManualSession(self)
 
     if UGCGameSystem.IsServer() then
         self:EnsureWarehouseInitialCapacity()
-        if MineZoneManager then
-            MineZoneManager.Initialize()
-        end
+        -- 开局发放铜镐（迁自 Mine_03，延后等 Pawn/背包就绪）
         self._InitialPickaxeRetry = 0
+        -- [Test] 1000000 gold
+        UGCTimerUtility.CreateLuaTimer(1.0, function()
+            if UGCObjectUtility.IsObjectValid(self) then
+                local cg = GetItemCount(self, GOLD_ITEM_ID)
+                if cg < 1000 then
+                    UGCBackpackSystemV2.AddItemV2(self, GOLD_ITEM_ID, 1000 - cg)
+                end
+            end
+        end, false)
+        
         UGCTimerUtility.CreateLuaTimer(INITIAL_PICKAXE_DELAY_SEC, function()
             if UGCObjectUtility.IsObjectValid(self) then
                 self:GiveInitialCopperPickaxe()
@@ -1123,21 +1125,21 @@ end
 
 function UGCPlayerController:Server_UnlockMineTeleport()
     if IsMineTeleportUnlocked(self) then
-        InvokeClient(self, "Client_MineTeleportNotify", "传送大厅已解锁")
-        InvokeClient(self, "Client_MineTeleportUnlocked")
+        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportNotify", "传送大厅已解锁")
+        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportUnlocked")
         return
     end
     if not TryRemoveGold(self, MINE_TELEPORT_UNLOCK_COST) then
-        InvokeClient(
-            self, "Client_MineTeleportNotify",
+        UnrealNetwork.CallUnrealRPC(
+            self, self, "Client_MineTeleportNotify",
             "金币不足，解锁需要 " .. tostring(MINE_TELEPORT_UNLOCK_COST)
         )
         return
     end
     self.bMineTeleportUnlocked = true
     ugcprint("[MineTeleport] 传送大厅已解锁")
-    InvokeClient(self, "Client_MineTeleportUnlocked")
-    InvokeClient(self, "Client_MineTeleportNotify", "解锁成功！可传送至各矿区")
+    UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportUnlocked")
+    UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportNotify", "解锁成功！可传送至各矿区")
 end
 
 function UGCPlayerController:Client_MineTeleportUnlocked()
@@ -1152,87 +1154,39 @@ function UGCPlayerController:Server_TeleportToMineZone(ZoneId)
     ZoneId = math.floor(tonumber(ZoneId) or 0)
     local Zone = MineTeleportConfig.GetZone(ZoneId)
     if Zone == nil then
-        InvokeClient(self, "Client_MineTeleportNotify", "无效矿区")
+        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportNotify", "无效矿区")
         return
     end
     if not IsMineTeleportUnlocked(self) then
-        InvokeClient(
-            self, "Client_MineTeleportNotify",
+        UnrealNetwork.CallUnrealRPC(
+            self, self, "Client_MineTeleportNotify",
             "请先解锁传送大厅（" .. tostring(MINE_TELEPORT_UNLOCK_COST) .. " 金币）"
         )
         return
     end
     if GetGoldCount(self) < MINE_TELEPORT_COST then
-        InvokeClient(
-            self, "Client_MineTeleportNotify",
+        UnrealNetwork.CallUnrealRPC(
+            self, self, "Client_MineTeleportNotify",
             "金币不足，传送需要 " .. tostring(MINE_TELEPORT_COST)
         )
         return
     end
     if not TryRemoveGold(self, MINE_TELEPORT_COST) then
-        InvokeClient(self, "Client_MineTeleportNotify", "扣费失败")
+        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportNotify", "扣费失败")
         return
     end
-
-    local zoneName = tostring(Zone.Name)
-    local px, py, pz = Zone.PadX or 0, Zone.PadY or 0, Zone.PadZ or 0
-
-    InvokeClient(self, "Client_SetCameraFade", true, 1.5, true)
-
-    UGCTimerUtility.CreateLuaTimer(0.5, function()
-        if not UGCObjectUtility.IsObjectValid(self) then
-            UGCBackpackSystemV2.AddItemV2(self, GOLD_ITEM_ID, MINE_TELEPORT_COST)
-            InvokeClient(self, "Client_MineTeleportNotify", "传送失败，已退回费用")
-            return
-        end
-
-        local Ok = TeleportPawnTo(self, px, py, pz)
-        if not Ok then
-            UGCBackpackSystemV2.AddItemV2(self, GOLD_ITEM_ID, MINE_TELEPORT_COST)
-            InvokeClient(self, "Client_MineTeleportNotify", "传送失败，已退回费用")
-            InvokeClient(self, "Client_SetCameraFade", false, 0, false)
-            ugcprint(string.format("[MineTeleport] ❌ 传送失败: %s (%.0f,%.0f,%.0f)", zoneName, px, py, pz))
-            return
-        end
-
-        ugcprint(string.format("[MineTeleport] ✅ %s (%d) @ (%.0f,%.0f,%.0f)", zoneName, ZoneId, px, py, pz))
-
-        InvokeClient(self, "Client_MineTeleported", ZoneId)
-        InvokeClient(self, "Client_MineTeleportNotify", "已传送至「" .. zoneName .. "」")
-
-        UGCTimerUtility.CreateLuaTimer(0.3, function()
-            if UGCObjectUtility.IsObjectValid(self) then
-                InvokeClient(self, "Client_SetCameraFade", false, 1.5, false)
-            end
-        end, false)
-    end, false)
-end
-
-function UGCPlayerController:Client_SetCameraFade(bFadeOut, Duration, bFadeAudio)
-    bFadeOut = bFadeOut == true
-    Duration = tonumber(Duration) or 1.5
-    bFadeAudio = bFadeAudio == true
-
-    if not self.PlayerCameraManager then
+    local Ok = TeleportPawnTo(self, Zone.PadX, Zone.PadY, Zone.PadZ)
+    if not Ok then
+        UGCBackpackSystemV2.AddItemV2(self, GOLD_ITEM_ID, MINE_TELEPORT_COST)
+        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportNotify", "传送失败，已退回费用")
         return
     end
-
-    local BlackColor = LinearColor.New(0, 0, 0, 1)
-    local WhiteColor = LinearColor.New(1, 1, 1, 1)
-
-    if bFadeOut then
-        if self.PlayerCameraManager.StartCameraFade then
-            pcall(function()
-                self.PlayerCameraManager:StartCameraFade(0, 1, Duration, BlackColor, bFadeAudio, true)
-            end)
-        end
-    else
-        if self.PlayerCameraManager.StartCameraFade then
-            pcall(function()
-                self.PlayerCameraManager:StartCameraFade(1, 0, Duration, WhiteColor, false, false)
-            end)
-        end
-    end
+    ugcprint("[MineTeleport] 传送至 " .. tostring(Zone.Name) .. " (" .. tostring(ZoneId) .. ")")
+    UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleported", ZoneId)
+    UnrealNetwork.CallUnrealRPC(
+        self, self, "Client_MineTeleportNotify",
+        "已传送至「" .. tostring(Zone.Name) .. "」"
+    )
 end
 
 function UGCPlayerController:Client_MineTeleported(ZoneId)
@@ -1243,11 +1197,11 @@ function UGCPlayerController:Client_MineTeleported(ZoneId)
 end
 
 function UGCPlayerController:RequestUnlockMineTeleport()
-    InvokeServer(self, "Server_UnlockMineTeleport")
+    UnrealNetwork.CallUnrealRPC(self, self, "Server_UnlockMineTeleport")
 end
 
 function UGCPlayerController:RequestTeleportToMineZone(ZoneId)
-    InvokeServer(self, "Server_TeleportToMineZone", ZoneId)
+    UnrealNetwork.CallUnrealRPC(self, self, "Server_TeleportToMineZone", ZoneId)
 end
 
 --- ========== 矿石加工厂 / 冶炼 ==========
@@ -2841,11 +2795,7 @@ function UGCPlayerController:GetAvailableServerRPCs()
         "Server_UnlockMineTeleport", "Server_TeleportToMineZone",
         "Server_UnlockSmeltingPlant", "Server_UpgradeSmeltingPlant", "Server_UnlockFurnace",
         "Server_StartSmelt", "Server_SkipSmelt", "Server_CollectSmelt",
-        "Server_UnlockTalentMarket", "Server_HireTalentWorker", "Server_CollectTalentJob",
-        "Server_BeginMineCarTrip", "Server_EndMineCarTrip",
-        "Server_UnlockVehicleRepair", "Server_CheckVehicleReturn", "Server_RepairMiningVehicle",
-        "Server_RecycleOre",
-        "Server_UpgradeWarehouse"
+        "Server_RecycleOre","Server_UpgradeWarehouse","Server_BuyTool","Server_UpgradeBackpack"
 end
 
 function UGCPlayerController:GetAvailableClientRPCs()
@@ -2858,13 +2808,130 @@ function UGCPlayerController:GetAvailableClientRPCs()
         "Client_TalentMarketNotify", "Client_TalentMarketUnlocked", "Client_TalentJobSync",
         "Client_VehicleRepairNotify", "Client_VehicleRepairUnlocked", "Client_VehicleRepairState", "Client_ForceStopMineCarMode",
         "Client_OreRecycleNotify",
-        "Client_WarehouseNotify"
+        "Client_WarehouseNotify",
+        "Client_ShopNotify"
+end
+
+-- ============ 矿工百货商店 RPC ============
+
+-- 玩家当前背包等级（存 PC 上）
+-- 初始为 1 级（10格），ReceiveBeginPlay 里初始化
+
+-- 服务端：购买工具
+function UGCPlayerController:Server_BuyTool(ToolIndex)
+    -- 1. 安全检查：只在服务端执行
+    if not UGCGameSystem.IsServer() then return end
+
+    ToolIndex = tonumber(ToolIndex) or 0
+    local tool = ShopConfig.GetTool(ToolIndex)
+    
+    -- 2. 检查工具是否存在
+    if not tool then
+        InvokeClient(self, "Client_ShopNotify", "工具不存在")
+        return
+    end
+    
+    -- 2.5. 检查是否已拥有该工具
+    local alreadyOwned = GetItemCount(self, tool.ItemId)
+    if alreadyOwned > 0 then
+        InvokeClient(self, "Client_ShopNotify", "已拥有该工具，无需重复购买")
+        return
+    end
+
+    -- 3. 检查是否免费（初始工具不用买）
+    if tool.Cost <= 0 then
+        -- 直接发工具，不收金币
+        UGCBackpackSystemV2.AddItemV2(self, tool.ItemId, 1)
+        InvokeClient(self, "Client_ShopNotify",
+            "获得初始工具：" .. tool.Name)
+        return
+    end
+
+    -- 4. 检查金币是否够
+    local myGold = GetItemCount(self, ShopConfig.GoldItemId)
+    if myGold < tool.Cost then
+        InvokeClient(self, "Client_ShopNotify",
+            "金币不足！需要 " .. tool.Cost .. " 金（当前 " .. myGold .. " 金）")
+        return
+    end
+
+    -- 5. 扣金币
+    UGCBackpackSystemV2.RemoveItemV2(self, ShopConfig.GoldItemId, tool.Cost)
+
+    -- 6. 发工具到背包
+    UGCBackpackSystemV2.AddItemV2(self, tool.ItemId, 1)
+
+    -- 7. 通知客户端
+    InvokeClient(self, "Client_ShopNotify",
+        "购买成功！获得 " .. tool.Name .. "（消耗 " .. tool.Cost .. " 金）")
+end
+
+-- 服务端：升级背包
+function UGCPlayerController:Server_UpgradeBackpack()
+    if not UGCGameSystem.IsServer() then return end
+
+    -- 1. 初始化背包等级
+    if not self.BackpackLevel then
+        self.BackpackLevel = 1
+    end
+
+    local curLevel = self.BackpackLevel
+    local maxLevel = ShopConfig.GetMaxBackpackLevel()
+
+    -- 2. 检查是否满级
+    if curLevel >= maxLevel then
+        InvokeClient(self, "Client_ShopNotify", "背包已满级！")
+        return
+    end
+
+    local nextLevel = curLevel + 1
+    local nextCfg = ShopConfig.GetBackpackLevel(nextLevel)
+    if not nextCfg then
+        InvokeClient(self, "Client_ShopNotify", "背包升级配置错误")
+        return
+    end
+
+    -- 3. 检查金币
+    local myGold = GetItemCount(self, ShopConfig.GoldItemId)
+    if myGold < nextCfg.Cost then
+        InvokeClient(self, "Client_ShopNotify",
+            "金币不足！升级到" .. nextLevel .. "级背包需要 " .. nextCfg.Cost .. " 金（当前 " .. myGold .. " 金）")
+        return
+    end
+
+    -- 4. 扣金币
+    UGCBackpackSystemV2.RemoveItemV2(self, ShopConfig.GoldItemId, nextCfg.Cost)
+
+    -- 5. 增加背包格数
+    --    UGCBackpackSystemV2 提供 AddBackpackCapacity 或 SetBackpackMaxSize
+    --    当前仓库用到 AddWarehouseCellCapacity，背包应类似
+    local addSlots = nextCfg.Slots - (ShopConfig.GetBackpackLevel(curLevel) and ShopConfig.GetBackpackLevel(curLevel).Slots or 10)
+    if UGCBackpackSystemV2.AddCellCapacity then
+        pcall(UGCBackpackSystemV2.AddCellCapacity, self, addSlots)
+    end
+
+    -- 6. 更新等级
+    self.BackpackLevel = nextLevel
+
+    -- 7. 通知客户端
+    InvokeClient(self, "Client_ShopNotify",
+        "背包升级成功！" .. curLevel .. "级 → " .. nextLevel .. "级（" .. nextCfg.Slots .. "格，消耗 " .. nextCfg.Cost .. " 金）")
+end
+
+-- 客户端：收到商店通知
+function UGCPlayerController:Client_ShopNotify(Msg)
+    Msg = tostring(Msg or "")
+    print("[Shop] " .. Msg)
+    self.ShopLastMsg = Msg
+    if self.OnShopNotify then
+        pcall(self.OnShopNotify, Msg)
+    end
 end
 
 function UGCPlayerController:GetReplicatedProperties()
     return "bJadeShopUnlocked", "bMineTeleportUnlocked",
-        "bTalentMarketUnlocked", "bVehicleRepairUnlocked",
-        "bSmelterUnlocked", "SmelterPlantLevel", "UnlockedFurnaceCount"
+        "bSmelterUnlocked", "SmelterPlantLevel", "UnlockedFurnaceCount",
+        "BackpackLevel"
 end
 
 return UGCPlayerController

@@ -1507,12 +1507,37 @@ function UGCPlayerController:Server_ClearJadeCollectionSlot(Slot)
     Slot = ClampJadeCollectionSlot(Slot)
     local Displays = EnsureJadeCollectionDisplays(self)
     local Existing = Displays[Slot]
-    if Existing == nil or math.floor(tonumber(Existing.State) or 0) == JadeCollectionConfig.StateEmpty then
+    local State = Existing and math.floor(tonumber(Existing.State) or 0) or JadeCollectionConfig.StateEmpty
+    if Existing == nil or State == JadeCollectionConfig.StateEmpty then
         InvokeClient(self, "Client_JadeCollectionNotify", "Collection slot is empty")
         SyncJadeCollectionToClient(self)
         return
     end
-    UGCBackpackSystemV2.AddItemV2(self, JADE_ITEM_ID, 1)
+    local Msg = "玉石已取回"
+    if State == JadeCollectionConfig.StateAppraised then
+        local SellValue = math.max(0, math.floor(tonumber(Existing.Value) or 0))
+        if SellValue > 0 then
+            local Ok = pcall(function()
+                UGCBackpackSystemV2.AddItemV2(self, GOLD_ITEM_ID, SellValue)
+            end)
+            if not Ok then
+                InvokeClient(self, "Client_JadeCollectionNotify", "出售失败，请重试")
+                SyncJadeCollectionToClient(self)
+                return
+            end
+        end
+        Msg = "鉴定玉石已出售：+" .. tostring(SellValue) .. " 金币"
+    else
+        local Ok = pcall(function()
+            UGCBackpackSystemV2.AddItemV2(self, JADE_ITEM_ID, 1)
+        end)
+        if not Ok then
+            InvokeClient(self, "Client_JadeCollectionNotify", "取回失败，请重试")
+            SyncJadeCollectionToClient(self)
+            return
+        end
+        Msg = "玉石原石已取回"
+    end
     Displays[Slot] = CreateJadeCollectionDisplay(
         JadeCollectionConfig.StateEmpty,
         0,
@@ -1520,7 +1545,7 @@ function UGCPlayerController:Server_ClearJadeCollectionSlot(Slot)
         0,
         GetJadeCollectionTotalCells()
     )
-    self.JadeCollectionLastMsg = "Jade returned"
+    self.JadeCollectionLastMsg = Msg
     SyncJadeCollectionToClient(self)
     InvokeClient(self, "Client_JadeCollectionNotify", self.JadeCollectionLastMsg)
 end

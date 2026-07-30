@@ -7,14 +7,19 @@
 --Edit Below--
 local BP_JadeCollectionRoomFacility = {
     bLocalPlayerInside = false,
+    bPromptDismissed = false,
     PromptWidget = nil,
     bPromptOpening = false,
     bOverlapBound = false,
     SelectedSlot = 1,
+    RefreshTimer = nil,
 }
 
 local PROMPT_UI_PATH = "Asset/Blueprint/Prefabs/UI/WBP_JadeFacilityPrompt.WBP_JadeFacilityPrompt_C"
 local INTERACT_RADIUS = 250
+local PROMPT_SHOW_DISTANCE = 280
+local PROMPT_HIDE_DISTANCE = 430
+local PROMPT_REFRESH_INTERVAL = 0.5
 
 local function IsLocalPlayerPawn(OtherActor)
     if OtherActor == nil then
@@ -26,6 +31,48 @@ end
 
 local function GetLocalPC()
     return UGCGameSystem.GetLocalPlayerController()
+end
+
+local function GetActorLocationSafe(Actor)
+    if Actor == nil then
+        return nil
+    end
+    local Ok, Loc = pcall(function()
+        return Actor:K2_GetActorLocation()
+    end)
+    if Ok then
+        return Loc
+    end
+    return nil
+end
+
+local function GetComponentLocationSafe(Component)
+    if Component == nil then
+        return nil
+    end
+    local Ok, Loc = pcall(function()
+        return Component:K2_GetComponentLocation()
+    end)
+    if Ok then
+        return Loc
+    end
+    return nil
+end
+
+local function GetDistanceSq(A, B)
+    if A == nil or B == nil then
+        return nil
+    end
+    local AX = tonumber(A.X or A.x) or 0
+    local AY = tonumber(A.Y or A.y) or 0
+    local AZ = tonumber(A.Z or A.z) or 0
+    local BX = tonumber(B.X or B.x) or 0
+    local BY = tonumber(B.Y or B.y) or 0
+    local BZ = tonumber(B.Z or B.z) or 0
+    local DX = AX - BX
+    local DY = AY - BY
+    local DZ = AZ - BZ
+    return DX * DX + DY * DY + DZ * DZ
 end
 
 local function GetW(Widget, Name)
@@ -99,6 +146,8 @@ local function GetDisplayStateName(Status)
 end
 
 function BP_JadeCollectionRoomFacility:ReceiveBeginPlay()
+    self:StartRefreshTimer()
+
     local Trigger = self.InteractTrigger
     if Trigger == nil then
         ugcprint("[JadeCollectionRoom] InteractTrigger missing")
@@ -128,6 +177,7 @@ function BP_JadeCollectionRoomFacility:ReceiveBeginPlay()
 end
 
 function BP_JadeCollectionRoomFacility:ReceiveEndPlay()
+    self:StopRefreshTimer()
     self:UnbindPCCallbacks()
     local Trigger = self.InteractTrigger
     if Trigger and self.bOverlapBound then
@@ -151,6 +201,9 @@ function BP_JadeCollectionRoomFacility:OnTriggerBeginOverlap(
     if not IsLocalPlayerPawn(OtherActor) then
         return
     end
+    if self.bPromptDismissed then
+        return
+    end
     if self.bLocalPlayerInside then
         return
     end
@@ -164,7 +217,63 @@ function BP_JadeCollectionRoomFacility:OnTriggerEndOverlap(
         return
     end
     self.bLocalPlayerInside = false
+    self.bPromptDismissed = false
     self:HidePrompt()
+end
+
+function BP_JadeCollectionRoomFacility:IsLocalPlayerNear(Distance)
+    local LocalPawn = UGCGameSystem.GetLocalPlayerPawn()
+    local PawnLoc = GetActorLocationSafe(LocalPawn)
+    local FacilityLoc = GetComponentLocationSafe(self.InteractTrigger)
+        or GetComponentLocationSafe(self.PromptAnchor)
+        or GetActorLocationSafe(self)
+    local DistSq = GetDistanceSq(PawnLoc, FacilityLoc)
+    if DistSq == nil then
+        return false
+    end
+    return DistSq <= Distance * Distance
+end
+
+function BP_JadeCollectionRoomFacility:StartRefreshTimer()
+    self:StopRefreshTimer()
+    if UGCTimerUtility == nil or UGCTimerUtility.CreateLuaTimer == nil then
+        return
+    end
+    local Facility = self
+    local Ok, Handle = pcall(function()
+        return UGCTimerUtility.CreateLuaTimer(PROMPT_REFRESH_INTERVAL, function()
+            local bNearShow = Facility:IsLocalPlayerNear(PROMPT_SHOW_DISTANCE)
+            local bNearHide = Facility:IsLocalPlayerNear(PROMPT_HIDE_DISTANCE)
+            if bNearShow then
+                Facility.bLocalPlayerInside = true
+                if Facility.bPromptDismissed ~= true then
+                    Facility:ShowPrompt()
+                end
+                if Facility.PromptWidget ~= nil then
+                    Facility:RefreshPromptUI()
+                end
+                return
+            end
+            if not bNearHide then
+                Facility.bLocalPlayerInside = false
+                Facility.bPromptDismissed = false
+                Facility:HidePrompt()
+            end
+        end, true)
+    end)
+    if Ok then
+        self.RefreshTimer = Handle
+    end
+end
+
+function BP_JadeCollectionRoomFacility:StopRefreshTimer()
+    local Handle = self.RefreshTimer
+    self.RefreshTimer = nil
+    if Handle ~= nil and UGCTimerUtility and UGCTimerUtility.RemoveLuaTimer then
+        pcall(function()
+            UGCTimerUtility.RemoveLuaTimer(Handle)
+        end)
+    end
 end
 
 function BP_JadeCollectionRoomFacility:BindPCCallbacks()
@@ -264,6 +373,16 @@ function BP_JadeCollectionRoomFacility:RefreshPromptUI()
     SetText(GetW(Widget, "Txt_Manual"), string.format("切换展台 %d/%d", Slot, SlotCount))
     SetText(GetW(Widget, "Txt_Close"), "关闭")
 
+    local PrimaryText = string.format("放入玉石原石 x%d", RawCount)
+    if bOccupied then
+        if State == 2 then
+            PrimaryText = string.format("出售鉴定玉石 +%d金", Value)
+        else
+            PrimaryText = "取回玉石原石"
+        end
+    end
+    SetText(GetW(Widget, "Txt_Unlock"), PrimaryText)
+
     SetEnabled(GetW(Widget, "Btn_Unlock"), bOccupied or RawCount > 0)
     SetEnabled(GetW(Widget, "Btn_Quick"), (not bOccupied) and bHasCandidate)
     SetEnabled(GetW(Widget, "Btn_Manual"), SlotCount > 1)
@@ -294,6 +413,9 @@ function BP_JadeCollectionRoomFacility:ShowPrompt()
         end
         return
     end
+    if self.bPromptDismissed then
+        return
+    end
     self.bPromptOpening = true
     self:BindPCCallbacks()
 
@@ -304,7 +426,7 @@ function BP_JadeCollectionRoomFacility:ShowPrompt()
             ugcprint("[JadeCollectionRoom] prompt create failed")
             return
         end
-        if not self.bLocalPlayerInside then
+        if not self.bLocalPlayerInside or self.bPromptDismissed then
             if Widget.RemoveFromParent then
                 pcall(function()
                     Widget:RemoveFromParent()
@@ -377,6 +499,7 @@ function BP_JadeCollectionRoomFacility:HidePrompt()
 end
 
 function BP_JadeCollectionRoomFacility:OnCloseClicked()
+    self.bPromptDismissed = true
     self:HidePrompt()
 end
 

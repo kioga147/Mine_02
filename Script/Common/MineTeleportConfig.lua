@@ -1,11 +1,12 @@
 --- 矿区传送大厅配置（Mine_02-main）
---- 解锁 8500 / 单次传送 3000 / 返回出生点 0
---- 5个矿区按五角星(五角形)布局环绕出生点(20830, 28740)，半径4200
---- Pad=传送落点(矿区中心), Hall=大厅位置(矿区边缘朝出生点方向)
+--- 解锁 8500 / 矿区传送 3000 / 出生点传送 0
+--- 5个矿区按五角星布局环绕出生点(20830, 28740)，半径4200
+--- ZoneId 1-5 = 矿区, ZoneId 6 = 出生点
 local MineTeleportConfig = {
     UnlockCost = 8500,
     TeleportCost = 3000,
-    ReturnCost = 0,
+    SpawnCost = 0,
+    SPAWN_ZONE_ID = 6,
     SpawnPoint = { X = 20830, Y = 28740, Z = 192 },
     Zones = {
         [1] = {
@@ -37,15 +38,33 @@ local MineTeleportConfig = {
 }
 
 function MineTeleportConfig.GetZone(ZoneId)
-    return MineTeleportConfig.Zones[tonumber(ZoneId) or 0]
+    local Id = tonumber(ZoneId) or 0
+    if Id == MineTeleportConfig.SPAWN_ZONE_ID then
+        return {
+            Name = "出生点",
+            PadX = MineTeleportConfig.SpawnPoint.X,
+            PadY = MineTeleportConfig.SpawnPoint.Y,
+            PadZ = MineTeleportConfig.SpawnPoint.Z,
+            IsSpawn = true,
+        }
+    end
+    return MineTeleportConfig.Zones[Id]
 end
 
 function MineTeleportConfig.GetZoneCount()
     return 5
 end
 
+function MineTeleportConfig.GetTotalCount()
+    return 6
+end
+
+function MineTeleportConfig.IsSpawnZone(ZoneId)
+    return tonumber(ZoneId) == MineTeleportConfig.SPAWN_ZONE_ID
+end
+
 function MineTeleportConfig.NextZoneId(CurrentId)
-    local N = MineTeleportConfig.GetZoneCount()
+    local N = MineTeleportConfig.GetTotalCount()
     local Id = tonumber(CurrentId) or 1
     Id = Id + 1
     if Id > N then
@@ -58,8 +77,11 @@ function MineTeleportConfig.GetSpawnPoint()
     return MineTeleportConfig.SpawnPoint
 end
 
-function MineTeleportConfig.GetReturnCost()
-    return MineTeleportConfig.ReturnCost or 0
+function MineTeleportConfig.GetTeleportCost(ZoneId)
+    if MineTeleportConfig.IsSpawnZone(ZoneId) then
+        return MineTeleportConfig.SpawnCost or 0
+    end
+    return MineTeleportConfig.TeleportCost
 end
 
 return MineTeleportConfig

@@ -51,6 +51,8 @@ local ZONES = {
         RadiusY = 500,
         UseGrid = true,
         GridConfig = { GridSizeX = 3, GridSizeY = 3, SpacingX = 250, SpacingY = 250 },
+        RespawnMode = "NoPlayers",
+        RespawnDelay = 2,
         OreDist = {
             { OreKey = "Coal",    Count = 7, RespawnSec = 8 },
             { OreKey = "Stone",   Count = 2, RespawnSec = 5 },
@@ -65,6 +67,8 @@ local ZONES = {
         RadiusY = 500,
         UseGrid = true,
         GridConfig = { GridSizeX = 3, GridSizeY = 3, SpacingX = 250, SpacingY = 250 },
+        RespawnMode = "NoPlayers",
+        RespawnDelay = 2,
         OreDist = {
             { OreKey = "CopperOre", Count = 5, RespawnSec = 10 },
             { OreKey = "IronOre",   Count = 3, RespawnSec = 10 },
@@ -80,6 +84,8 @@ local ZONES = {
         RadiusY = 600,
         UseGrid = true,
         GridConfig = { GridSizeX = 3, GridSizeY = 3, SpacingX = 280, SpacingY = 280 },
+        RespawnMode = "NoPlayers",
+        RespawnDelay = 2,
         OreDist = {
             { OreKey = "Quartz",    Count = 3, RespawnSec = 15 },
             { OreKey = "Bauxite",   Count = 2, RespawnSec = 15 },
@@ -97,6 +103,8 @@ local ZONES = {
         RadiusY = 500,
         UseGrid = true,
         GridConfig = { GridSizeX = 3, GridSizeY = 3, SpacingX = 280, SpacingY = 280 },
+        RespawnMode = "NoPlayers",
+        RespawnDelay = 2,
         OreDist = {
             { OreKey = "Diamond", Count = 3, RespawnSec = 30 },
             { OreKey = "RubyOre", Count = 3, RespawnSec = 30 },

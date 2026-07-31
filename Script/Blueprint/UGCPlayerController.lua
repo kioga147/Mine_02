@@ -14,11 +14,11 @@ do
             UnlockCost = 8500,
             TeleportCost = 3000,
             Zones = {
-                [1] = { Name = "石滩", PadX = 45000, PadY = 45000, PadZ = 220 },
-                [2] = { Name = "煤矿场", PadX = 40000, PadY = 28000, PadZ = 220 },
-                [3] = { Name = "黄铜矿脉", PadX = 20000, PadY = 8000, PadZ = 220 },
-                [4] = { Name = "深层矿区", PadX = 20000, PadY = 48000, PadZ = 220 },
-                [5] = { Name = "宝石矿区", PadX = 0, PadY = 28000, PadZ = 220 },
+                [1] = { Name = "石滩", PadX = 20830, PadY = 24940, PadZ = 220 },
+                [2] = { Name = "煤矿场", PadX = 24450, PadY = 27560, PadZ = 220 },
+                [3] = { Name = "黄铜矿脉", PadX = 23070, PadY = 31820, PadZ = 220 },
+                [4] = { Name = "深层矿区", PadX = 18600, PadY = 31820, PadZ = 220 },
+                [5] = { Name = "宝石矿区", PadX = 17220, PadY = 27560, PadZ = 220 },
             },
             GetZone = function(ZoneId)
                 return MineTeleportConfig.Zones[tonumber(ZoneId) or 0]

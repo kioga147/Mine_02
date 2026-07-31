@@ -141,7 +141,8 @@ function WBP_JadeFacilityPrompt:RefreshShopState(Status)
     local QuickCost = tonumber(Status.QuickCost) or 3000
     local LastMsg = tostring(Status.LastMsg or "")
     local ZoneName = tostring(Status.ZoneName or "矿区")
-    local ReturnCost = tonumber(Status.ReturnCost) or 0
+    local TargetCost = tonumber(Status.TargetCost) or QuickCost
+    local TargetIsSpawn = Status.TargetIsSpawn == true
 
     local Txt = GetW(self, "Txt_Prompt")
     if Txt and Txt.SetText then
@@ -150,10 +151,17 @@ function WBP_JadeFacilityPrompt:RefreshShopState(Status)
             if not bUnlocked then
                 Line = string.format("矿区传送大厅 · 请先解锁（%d 金币，当前 %d）", UnlockCost, GoldCount)
             else
-                Line = string.format(
-                    "矿区传送大厅 · 当前矿区：%s · 传送 %d 金币 / 返回出生点 %d 金币（余额 %d）",
-                    ZoneName, QuickCost, ReturnCost, GoldCount
-                )
+                if TargetIsSpawn then
+                    Line = string.format(
+                        "矿区传送大厅 · 当前目标：出生点 · 费用 %d 金币（余额 %d）",
+                        TargetCost, GoldCount
+                    )
+                else
+                    Line = string.format(
+                        "矿区传送大厅 · 当前目标：%s · 费用 %d 金币（余额 %d）",
+                        ZoneName, TargetCost, GoldCount
+                    )
+                end
             end
         else
             if not bUnlocked then
@@ -170,34 +178,31 @@ function WBP_JadeFacilityPrompt:RefreshShopState(Status)
     end
 
     if Mode == "teleport" then
-        -- 传送大厅布局（单行）：
-        -- 解锁 | 传送至矿区 | 切换矿区 | 返回出生点 | 关闭
+        -- 传送大厅布局（4按钮）：
+        -- 解锁 | 传送(动态) | 切换矿区 | 关闭
+        SetVisible(GetW(self, "Btn_Enter"), false)
+        SetVisible(GetW(self, "Gap_Enter"), false)
         SetVisible(GetW(self, "Btn_Unlock"), not bUnlocked)
         SetVisible(GetW(self, "Gap_Unlock"), not bUnlocked)
         SetVisible(GetW(self, "Btn_Quick"), bUnlocked)
         SetVisible(GetW(self, "Gap_Quick"), bUnlocked)
         SetVisible(GetW(self, "Btn_Manual"), bUnlocked)
         SetVisible(GetW(self, "Gap_Manual"), bUnlocked)
-        SetVisible(GetW(self, "Btn_Enter"), bUnlocked)
-        SetVisible(GetW(self, "Gap_Enter"), bUnlocked)
         SetVisible(GetW(self, "Btn_Close"), true)
         SetVisible(GetW(self, "Gap_Close"), true)
 
+        local TargetCost = tonumber(Status.TargetCost) or QuickCost
         local BtnUnlock = GetW(self, "Btn_Unlock")
         if BtnUnlock and BtnUnlock.SetIsEnabled then
             BtnUnlock:SetIsEnabled(GoldCount >= UnlockCost)
         end
         local BtnQuick = GetW(self, "Btn_Quick")
         if BtnQuick and BtnQuick.SetIsEnabled then
-            BtnQuick:SetIsEnabled(GoldCount >= QuickCost)
+            BtnQuick:SetIsEnabled(GoldCount >= TargetCost)
         end
         local BtnManual = GetW(self, "Btn_Manual")
         if BtnManual and BtnManual.SetIsEnabled then
             BtnManual:SetIsEnabled(true)
-        end
-        local BtnEnter = GetW(self, "Btn_Enter")
-        if BtnEnter and BtnEnter.SetIsEnabled then
-            BtnEnter:SetIsEnabled(true)
         end
         local BtnClose = GetW(self, "Btn_Close")
         if BtnClose and BtnClose.SetIsEnabled then

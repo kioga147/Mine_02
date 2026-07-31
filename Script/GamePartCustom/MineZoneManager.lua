@@ -32,6 +32,8 @@ local RESPAWN_TIMERS = {}
 
 local _GROUP_RESPAWNING = {}
 
+local _PLAYER_CHECK_TIMERS = {}
+
 local _bInitialized = false
 
 local _bAllZonesSpawned = false
@@ -207,6 +209,83 @@ function MineZoneManager.RegisterOre(Actor, OreKey)
     MineZoneManager._ScheduleSummary()
 end
 
+function MineZoneManager._CountPlayersInZone(ZoneId)
+    local zone = MineZoneConfig and MineZoneConfig.GetZone(ZoneId)
+    if zone == nil then
+        return 0
+    end
+
+    local pcList = nil
+    local ok, result = pcall(function()
+        return UGCGameSystem.GetAllPlayerController(false)
+    end)
+    if ok and result then
+        pcList = result
+    end
+
+    if pcList == nil then
+        return 0
+    end
+
+    local count = 0
+    for _, pc in ipairs(pcList) do
+        if pc and UGCObjectUtility.IsObjectValid(pc) then
+            local pawn = pc:K2_GetPawn()
+            if pawn and UGCObjectUtility.IsObjectValid(pawn) then
+                local okLoc, loc = pcall(function()
+                    return pawn:K2_GetActorLocation()
+                end)
+                if okLoc and loc then
+                    local dx = loc.X - (zone.CenterX or 0)
+                    local dy = loc.Y - (zone.CenterY or 0)
+                    if math.abs(dx) <= (zone.RadiusX or 1000)
+                        and math.abs(dy) <= (zone.RadiusY or 1000) then
+                        count = count + 1
+                    end
+                end
+            end
+        end
+    end
+
+    return count
+end
+
+function MineZoneManager._ScheduleNoPlayersLoop(ZoneId, ZoneName)
+    if _PLAYER_CHECK_TIMERS[ZoneId] then
+        return
+    end
+    _PLAYER_CHECK_TIMERS[ZoneId] = true
+
+    local checkInterval = 1.0
+    UGCTimerUtility.CreateLuaTimer(checkInterval, function()
+        if not _PLAYER_CHECK_TIMERS[ZoneId] then
+            return
+        end
+
+        local players = MineZoneManager._CountPlayersInZone(ZoneId)
+        if players > 0 then
+            ugcprint(string.format(
+                "[MineZoneManager] 矿区%s仍有%d人，继续等待...",
+                ZoneName, players))
+            _PLAYER_CHECK_TIMERS[ZoneId] = nil
+            MineZoneManager._ScheduleNoPlayersLoop(ZoneId, ZoneName)
+        else
+            _PLAYER_CHECK_TIMERS[ZoneId] = nil
+            _GROUP_RESPAWNING[ZoneId] = true
+            local delay = MineZoneConfig and MineZoneConfig.GetRespawnDelay(ZoneId) or 2
+            ugcprint(string.format(
+                "[MineZoneManager] 矿区%s已无人，%.1f秒后集体刷新",
+                ZoneName, delay))
+            UGCTimerUtility.CreateLuaTimer(delay, function()
+                _GROUP_RESPAWNING[ZoneId] = nil
+                ugcprint(string.format(
+                    "[MineZoneManager] 🔄 无人刷新矿区: %s", ZoneName))
+                MineZoneManager.SpawnZoneOres(ZoneId)
+            end, false)
+        end
+    end, false)
+end
+
 function MineZoneManager.SpawnOreForRespawn(OreKey, X, Y, Z, ZoneId)
     if not UGCGameSystem.IsServer() then
         return nil
@@ -258,6 +337,7 @@ function MineZoneManager.OnOreDestroyed(ZoneId, OreKey, Actor)
 
     local respawnMode = MineZoneConfig and MineZoneConfig.GetRespawnMode(ZoneId) or "Individual"
     local bAllAtOnce = (respawnMode == "AllAtOnce")
+    local bNoPlayers = (respawnMode == "NoPlayers")
 
     local spawnInfo = nil
     if ZONE_ACTORS[ZoneId] then
@@ -325,6 +405,19 @@ function MineZoneManager.OnOreDestroyed(ZoneId, OreKey, Actor)
                 ugcprint(string.format("[MineZoneManager] 🔄 集体刷新矿区: %s", zone.Name or tostring(ZoneId)))
                 MineZoneManager.SpawnZoneOres(ZoneId)
             end, false)
+        end
+        return
+    end
+
+    -- 矿区无人时集体刷新模式
+    if bNoPlayers then
+        local remainingCount = MineZoneManager.GetZoneOreCount(ZoneId)
+        if remainingCount == 0 and not _GROUP_RESPAWNING[ZoneId] and not _PLAYER_CHECK_TIMERS[ZoneId] then
+            local zoneName = zone.Name or tostring(ZoneId)
+            ugcprint(string.format(
+                "[MineZoneManager] 矿区%s矿石已全部挖完，等待无人时刷新",
+                zoneName))
+            MineZoneManager._ScheduleNoPlayersLoop(ZoneId, zoneName)
         end
         return
     end

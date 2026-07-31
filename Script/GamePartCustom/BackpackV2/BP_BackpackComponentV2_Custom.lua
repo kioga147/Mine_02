@@ -118,30 +118,37 @@ end
 
 ---func 背包初始化函数，玩家登录后执行一次(服务端调用)
 function BP_BackpackComponentV2_Custom:InitEventAfterPlayerEnter()
-    if BP_BackpackComponentV2_Custom.SuperClass.InitEventAfterPlayerEnter then
-        pcall(function()
-            BP_BackpackComponentV2_Custom.SuperClass.InitEventAfterPlayerEnter(self)
-        end)
-    end
     -- 玩家仓库：初始自动解锁 50 格（对齐策划）
     local Initial = 50
+    local MaxWarehouse = 10050
     local OkCfg, Mod = pcall(function()
         return UGCGameSystem.UGCRequire("Script.Common.WarehouseConfig")
     end)
     if OkCfg and type(Mod) == "table" and Mod.GetInitialSlots then
         Initial = Mod.GetInitialSlots()
     end
+    if OkCfg and type(Mod) == "table" and Mod.GetMaxSlots then
+        MaxWarehouse = Mod.GetMaxSlots()
+    end
     local Player = self:GetOwner()
     if Player == nil or not UGCBackpackSystemV2 or not UGCBackpackSystemV2.GetWarehouseCellCapacity then
         return
+    end
+    if MaxWarehouse > 0 then
+        pcall(function()
+            self.MaxWarehouseCapacity = MaxWarehouse
+        end)
+        pcall(function()
+            self.WarehouseMaxCellCapacity = MaxWarehouse
+        end)
     end
     local Cap = math.floor(tonumber(UGCBackpackSystemV2.GetWarehouseCellCapacity(Player)) or 0)
     if Cap >= Initial then
         return
     end
     local Need = Initial - Cap
-    local Ok = pcall(UGCBackpackSystemV2.AddWarehouseCellCapacity, Player, Need)
-    ugcprint("[仓库] InitEvent 初始容量", Cap, "->", Cap + Need, "ok=", Ok)
+    local Ok, Ret = pcall(UGCBackpackSystemV2.AddWarehouseCellCapacity, Player, Need)
+    ugcprint("[仓库] InitEvent 初始容量", Cap, "->", Cap + Need, "ok=", Ok, "ret=", Ret)
 end
 
 ---func 能否添加物品进背包(服务端调用)
@@ -163,16 +170,19 @@ function BP_BackpackComponentV2_Custom:CanAddItemV2(ItemID, Count)
     end
     ugcprint("[背包负重] 物品单重:", itemWeight, "kg")
     
-    local maxCount = math.floor(remainingWeight / itemWeight)
-    local result = math.min(Count, maxCount)
-    ugcprint("[背包负重] 允许添加数量:", result)
+    local safeItemWeight = tonumber(itemWeight) or 1
+    if safeItemWeight <= 0 then
+        safeItemWeight = 1
+    end
+    local maxWeightCount = math.floor(remainingWeight / safeItemWeight)
+    ugcprint("[背包负重] 按负重还能承载数量:", maxWeightCount)
     
-    if result < Count then
-        ugcprint("[背包负重] ⚠️ 超重警告！无法添加全部物品，已限制数量")
+    if maxWeightCount < Count then
+        ugcprint("[背包负重] ⚠️ 超重警告！负重只影响速度，不限制入背包数量")
     end
     
     ugcprint("[背包负重] ===========================")
-    return result
+    return Count
 end
 
 ---func 能否添加物品进背包(服务端调用)
@@ -190,16 +200,19 @@ function BP_BackpackComponentV2_Custom:CanAddItemByDefineIDV2(DefineID, Count)
     local itemWeight = GetItemWeight(DefineID)
     ugcprint("[背包负重] 物品单重:", itemWeight, "kg")
     
-    local maxCount = math.floor(remainingWeight / itemWeight)
-    local result = math.min(Count, maxCount)
-    ugcprint("[背包负重] 允许添加数量:", result)
+    local safeItemWeight = tonumber(itemWeight) or 1
+    if safeItemWeight <= 0 then
+        safeItemWeight = 1
+    end
+    local maxWeightCount = math.floor(remainingWeight / safeItemWeight)
+    ugcprint("[背包负重] 按负重还能承载数量:", maxWeightCount)
     
-    if result < Count then
-        ugcprint("[背包负重] ⚠️ 超重警告！无法添加全部物品，已限制数量")
+    if maxWeightCount < Count then
+        ugcprint("[背包负重] ⚠️ 超重警告！负重只影响速度，不限制入背包数量")
     end
     
     ugcprint("[背包负重] =======================================")
-    return result
+    return Count
 end
 
 ---func 当背包添加物品后回调(服务端调用)

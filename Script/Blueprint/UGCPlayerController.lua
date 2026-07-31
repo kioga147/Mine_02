@@ -1,6 +1,4 @@
 ---@class UGCPlayerController_C:BP_PlayerController_TopDown_C
----@field BuffClassTable ULuaArrayHelper<UClass>
----@field BuffClassTable1 ULuaArrayHelper<UClass>
 --Edit Below--
 local MineTeleportConfig = nil
 do
@@ -180,9 +178,9 @@ do
             GoldItemId = 8310002,
             WorkerOrder = { 1, 2, 3 },
             Workers = {
-                [1] = { Name = "低级工人", HireCost = 1000, DurationSec = 1800, RewardCount = 50, MinMineLevel = 1, MaxMineLevel = 3 },
-                [2] = { Name = "中级工人", HireCost = 10000, DurationSec = 1800, RewardCount = 100, MinMineLevel = 1, MaxMineLevel = 4 },
-                [3] = { Name = "高级矿工", HireCost = 100000, DurationSec = 900, RewardCount = 200, MinMineLevel = 3, MaxMineLevel = 5 },
+                [1] = { Name = "低级工人", HireCost = 1000, DurationSec = 60, RewardCount = 50, MinMineLevel = 1, MaxMineLevel = 3 },
+                [2] = { Name = "中级工人", HireCost = 10000, DurationSec = 60, RewardCount = 100, MinMineLevel = 1, MaxMineLevel = 4 },
+                [3] = { Name = "高级矿工", HireCost = 100000, DurationSec = 60, RewardCount = 200, MinMineLevel = 3, MaxMineLevel = 5 },
             },
             OrePool = {
                 { ItemId = 8310000, Name = "石头", MineLevel = 1 },
@@ -853,7 +851,24 @@ function UGCPlayerController:ReceiveBeginPlay()
     ClearManualSession(self)
 
     if UGCGameSystem.IsServer() then
-        self:EnsureWarehouseInitialCapacity()
+        self._WarehouseInitRetry = 0
+        local InitWarehouseLater = nil
+        InitWarehouseLater = function()
+            if not UGCObjectUtility.IsObjectValid(self) then
+                return
+            end
+            self:EnsureWarehouseInitialCapacity()
+            self._WarehouseInitRetry = (self._WarehouseInitRetry or 0) + 1
+            local Cap = 0
+            if UGCBackpackSystemV2 and UGCBackpackSystemV2.GetWarehouseCellCapacity then
+                local OkCap, RetCap = pcall(UGCBackpackSystemV2.GetWarehouseCellCapacity, self)
+                Cap = OkCap and math.floor(tonumber(RetCap) or 0) or 0
+            end
+            if self._WarehouseInitRetry < 5 and Cap < WarehouseConfig.GetInitialSlots() then
+                UGCTimerUtility.CreateLuaTimer(1.0, InitWarehouseLater, false)
+            end
+        end
+        UGCTimerUtility.CreateLuaTimer(1.0, InitWarehouseLater, false)
         -- 开局发放铜镐（迁自 Mine_03，延后等 Pawn/背包就绪）
         self._InitialPickaxeRetry = 0
         -- [Test] 1000000 gold
@@ -1688,6 +1703,14 @@ local function NowSec()
     return tonumber(T) or 0
 end
 
+local function LocalClockSec()
+    local Ok, T = pcall(os.time)
+    if Ok then
+        return tonumber(T) or 0
+    end
+    return 0
+end
+
 local function GetOasisTicket()
     if UGCCommoditySystem == nil or UGCCommoditySystem.GetTicket == nil then
         return 0
@@ -1783,6 +1806,166 @@ local function TryAddItems(PC, ItemId, Amount)
         UGCBackpackSystemV2.AddItemV2(PC, ItemId, Amount)
     end)
     return Ok and true or false
+end
+
+local function GetBackpackDefineIDsByItemId(PC, ItemId)
+    ItemId = math.floor(tonumber(ItemId) or 0)
+    if PC == nil or ItemId <= 0 or UGCBackpackSystemV2 == nil or UGCBackpackSystemV2.GetItemDefineIDsByIDV2 == nil then
+        return {}
+    end
+    local Ok, DefineIDs = pcall(UGCBackpackSystemV2.GetItemDefineIDsByIDV2, PC, ItemId)
+    if Ok and DefineIDs ~= nil then
+        return DefineIDs
+    end
+    return {}
+end
+
+local function GetDefineIDListCount(DefineIDs)
+    if DefineIDs == nil then
+        return 0
+    end
+    local Ok, Count = pcall(function()
+        return #DefineIDs
+    end)
+    if Ok then
+        return math.floor(tonumber(Count) or 0)
+    end
+    return 0
+end
+
+local function GetBackpackCountByDefineID(PC, DefineID)
+    if PC == nil or DefineID == nil or UGCBackpackSystemV2 == nil or UGCBackpackSystemV2.GetItemCountByDefineIDV2 == nil then
+        return 0
+    end
+    local Ok, Count = pcall(UGCBackpackSystemV2.GetItemCountByDefineIDV2, PC, DefineID)
+    if Ok then
+        return math.floor(tonumber(Count) or 0)
+    end
+    return 0
+end
+
+local function GetWarehouseItemCountSafe(PC, ItemId)
+    ItemId = math.floor(tonumber(ItemId) or 0)
+    if PC == nil or ItemId <= 0 or UGCBackpackSystemV2 == nil or UGCBackpackSystemV2.GetWarehouseItemCount == nil then
+        return 0
+    end
+    local Ok, Count = pcall(UGCBackpackSystemV2.GetWarehouseItemCount, PC, ItemId)
+    if Ok then
+        return math.floor(tonumber(Count) or 0)
+    end
+    return 0
+end
+
+local function GetWarehouseCapacitySafe(PC)
+    if PC == nil or UGCBackpackSystemV2 == nil or UGCBackpackSystemV2.GetWarehouseCellCapacity == nil then
+        return 0
+    end
+    local Ok, Cap = pcall(UGCBackpackSystemV2.GetWarehouseCellCapacity, PC)
+    if Ok then
+        return math.floor(tonumber(Cap) or 0)
+    end
+    return 0
+end
+
+local function EnsureInitialWarehouseCapacityForReward(PC)
+    if PC == nil or UGCBackpackSystemV2 == nil then
+        return
+    end
+    if UGCBackpackSystemV2.GetWarehouseCellCapacity == nil or UGCBackpackSystemV2.AddWarehouseCellCapacity == nil then
+        return
+    end
+    local Initial = 50
+    if WarehouseConfig ~= nil and WarehouseConfig.GetInitialSlots ~= nil then
+        Initial = WarehouseConfig.GetInitialSlots()
+    end
+    local Cap = GetWarehouseCapacitySafe(PC)
+    if Cap < Initial then
+        pcall(UGCBackpackSystemV2.AddWarehouseCellCapacity, PC, Initial - Cap)
+    end
+end
+
+local function TryMoveBackpackItemToWarehouse(PC, ItemId, Amount)
+    Amount = math.floor(tonumber(Amount) or 0)
+    ItemId = math.floor(tonumber(ItemId) or 0)
+    if Amount <= 0 or ItemId <= 0 then
+        return 0
+    end
+    if UGCBackpackSystemV2 == nil or UGCBackpackSystemV2.PutInWarehouse == nil then
+        return 0
+    end
+
+    EnsureInitialWarehouseCapacityForReward(PC)
+
+    local Before = GetWarehouseItemCountSafe(PC, ItemId)
+    local Remain = Amount
+    local DefineIDs = GetBackpackDefineIDsByItemId(PC, ItemId)
+    local MovedTotal = 0
+    for Index = 1, GetDefineIDListCount(DefineIDs) do
+        if Remain <= 0 then
+            break
+        end
+        local DefineID = DefineIDs[Index]
+        local StackCount = GetBackpackCountByDefineID(PC, DefineID)
+        if StackCount > 0 then
+            local MoveCount = math.min(StackCount, Remain)
+            local Ok, Ret = pcall(UGCBackpackSystemV2.PutInWarehouse, PC, DefineID, MoveCount)
+            if Ok and Ret ~= false then
+                MovedTotal = MovedTotal + MoveCount
+                Remain = math.max(0, Remain - MoveCount)
+            end
+            local After = GetWarehouseItemCountSafe(PC, ItemId)
+            local MovedNow = math.max(0, After - Before)
+            if MovedNow > MovedTotal then
+                MovedTotal = math.min(Amount, MovedNow)
+                Remain = math.max(0, Amount - MovedTotal)
+            end
+            if MovedTotal >= Amount then
+                return Amount
+            end
+        end
+    end
+    return math.max(0, math.min(Amount, MovedTotal))
+end
+
+local function TryAddItemsToWarehouseViaBackpack(PC, ItemId, Amount)
+    Amount = math.floor(tonumber(Amount) or 0)
+    ItemId = math.floor(tonumber(ItemId) or 0)
+    if Amount <= 0 or ItemId <= 0 then
+        return true, 0, 0
+    end
+    EnsureInitialWarehouseCapacityForReward(PC)
+    if GetWarehouseCapacitySafe(PC) <= 0 then
+        ugcprint("[TalentMarket] 仓库容量未初始化，停止发放 ItemId=" .. tostring(ItemId) .. " Amount=" .. tostring(Amount))
+        return true, 0, 0
+    end
+    local ExistingCount = GetItemCount(PC, ItemId)
+    if ExistingCount > 0 then
+        TryMoveBackpackItemToWarehouse(PC, ItemId, ExistingCount)
+    end
+    local TotalAdded = 0
+    local TotalMoved = 0
+    local Guard = 0
+    while TotalAdded < Amount and Guard < Amount + 8 do
+        Guard = Guard + 1
+        local RequestCount = Amount - TotalAdded
+        local Ok, AddedCount = pcall(function()
+            return UGCBackpackSystemV2.AddItemV2(PC, ItemId, RequestCount)
+        end)
+        if not Ok then
+            return false, TotalMoved, TotalAdded
+        end
+        AddedCount = math.floor(tonumber(AddedCount) or 0)
+        if AddedCount <= 0 then
+            break
+        end
+        TotalAdded = TotalAdded + AddedCount
+        local Moved = TryMoveBackpackItemToWarehouse(PC, ItemId, AddedCount)
+        TotalMoved = TotalMoved + Moved
+        if Moved < AddedCount then
+            break
+        end
+    end
+    return true, TotalMoved, TotalAdded
 end
 
 function UGCPlayerController:Client_SmeltNotify(Msg)
@@ -2248,32 +2431,141 @@ local function GetTalentRewardTotal(Rewards)
     return Total
 end
 
+local function GetTalentRewardItemName(ItemId)
+    ItemId = math.floor(tonumber(ItemId) or 0)
+    for _, Ore in ipairs(TalentMarketConfig.OrePool or {}) do
+        if math.floor(tonumber(Ore.ItemId) or 0) == ItemId then
+            return tostring(Ore.Name or ItemId)
+        end
+    end
+    return tostring(ItemId)
+end
+
+local function BuildTalentRewardEntries(Rewards)
+    local Entries = {}
+    if type(Rewards) ~= "table" then
+        return Entries
+    end
+
+    local Seen = {}
+    for _, Ore in ipairs(TalentMarketConfig.OrePool or {}) do
+        local ItemId = math.floor(tonumber(Ore.ItemId) or 0)
+        local Count = math.floor(tonumber(Rewards[ItemId] or Rewards[tostring(ItemId)]) or 0)
+        if ItemId > 0 and Count > 0 then
+            Entries[#Entries + 1] = {
+                ItemId = ItemId,
+                Count = Count,
+                Name = tostring(Ore.Name or ItemId),
+            }
+            Seen[ItemId] = true
+        end
+    end
+
+    local ExtraEntries = {}
+    for RawItemId, RawCount in pairs(Rewards) do
+        local ItemId = math.floor(tonumber(RawItemId) or 0)
+        local Count = math.floor(tonumber(RawCount) or 0)
+        if ItemId > 0 and Count > 0 and not Seen[ItemId] then
+            ExtraEntries[#ExtraEntries + 1] = {
+                ItemId = ItemId,
+                Count = Count,
+                Name = GetTalentRewardItemName(ItemId),
+            }
+        end
+    end
+    table.sort(ExtraEntries, function(A, B)
+        return (A.ItemId or 0) < (B.ItemId or 0)
+    end)
+    for _, Entry in ipairs(ExtraEntries) do
+        Entries[#Entries + 1] = Entry
+    end
+
+    return Entries
+end
+
+local function FormatTalentRewardEntries(Entries)
+    if type(Entries) ~= "table" or #Entries <= 0 then
+        return "无"
+    end
+    local Names = {}
+    for _, Entry in ipairs(Entries) do
+        local Count = math.floor(tonumber(Entry.Count) or 0)
+        if Count > 0 then
+            Names[#Names + 1] = tostring(Entry.Name or GetTalentRewardItemName(Entry.ItemId)) .. " x" .. tostring(Count)
+        end
+    end
+    if #Names <= 0 then
+        return "无"
+    end
+    return table.concat(Names, "、")
+end
+
+local function TryAddTalentRewardToBackpack(PC, ItemId, Amount)
+    ItemId = math.floor(tonumber(ItemId) or 0)
+    Amount = math.floor(tonumber(Amount) or 0)
+    if ItemId <= 0 or Amount <= 0 then
+        return true, 0
+    end
+    if PC == nil or UGCBackpackSystemV2 == nil or UGCBackpackSystemV2.AddItemV2 == nil then
+        return false, 0
+    end
+
+    local Ok, AddedCount = pcall(UGCBackpackSystemV2.AddItemV2, PC, ItemId, Amount)
+    if not Ok then
+        ugcprint("[TalentMarket] AddItemV2 failed ItemId=" .. tostring(ItemId) .. " Amount=" .. tostring(Amount))
+        return false, 0
+    end
+
+    AddedCount = math.floor(tonumber(AddedCount) or 0)
+    AddedCount = math.max(0, math.min(Amount, AddedCount))
+    return true, AddedCount
+end
+
 local function SyncTalentJobToClient(PC)
     local Job = EnsureTalentJob(PC)
     RefreshTalentJobState(Job)
-    local Summary = TalentMarketConfig.FormatRewards(Job.Rewards or {})
+    local Summary = FormatTalentRewardEntries(BuildTalentRewardEntries(Job.Rewards or {}))
+    local RemainingSec = math.max(0, math.floor((tonumber(Job.EndTime) or 0) - NowSec()))
     InvokeClient(
         PC, "Client_TalentJobSync",
         Job.State or TALENT_JOB_IDLE,
         Job.WorkerId or 0,
         Job.EndTime or 0,
         GetTalentRewardTotal(Job.Rewards),
-        Summary
+        Summary,
+        RemainingSec
     )
 end
 
 function UGCPlayerController:GetTalentMarketStatus(WorkerId)
     local Job = EnsureTalentJob(self)
+    local bClientJob = false
     if not UGCGameSystem.IsServer() and type(self.ClientTalentJob) == "table" then
         Job = self.ClientTalentJob
+        bClientJob = true
     end
-    RefreshTalentJobState(Job)
+    local RemainingSec = 0
+    if bClientJob then
+        local SyncRemaining = tonumber(Job.SyncRemainingSec)
+        local SyncLocalTime = tonumber(Job.SyncLocalTimeSec)
+        if SyncRemaining ~= nil and SyncLocalTime ~= nil and SyncLocalTime > 0 then
+            local Elapsed = math.max(0, LocalClockSec() - SyncLocalTime)
+            RemainingSec = math.max(0, math.floor(SyncRemaining - Elapsed))
+        else
+            RemainingSec = math.max(0, math.floor((tonumber(Job.EndTime) or 0) - NowSec()))
+        end
+        if Job.State == TALENT_JOB_RUNNING and RemainingSec <= 0 then
+            Job.State = TALENT_JOB_READY
+        end
+    else
+        RefreshTalentJobState(Job)
+        RemainingSec = math.max(0, math.floor((tonumber(Job.EndTime) or 0) - NowSec()))
+    end
     WorkerId = math.floor(tonumber(WorkerId) or 0)
     if TalentMarketConfig.GetWorker(WorkerId) == nil then
         WorkerId = TalentMarketConfig.GetFirstWorkerId()
     end
     local Worker = TalentMarketConfig.GetWorker(WorkerId) or {}
-    local RemainingSec = math.max(0, math.floor((tonumber(Job.EndTime) or 0) - NowSec()))
     return {
         bUnlocked = IsTalentMarketUnlocked(self),
         UnlockCost = TalentMarketConfig.UnlockCost or 5000,
@@ -2313,13 +2605,19 @@ function UGCPlayerController:Client_TalentMarketUnlocked()
     end
 end
 
-function UGCPlayerController:Client_TalentJobSync(State, WorkerId, EndTime, RewardTotal, RewardSummary)
+function UGCPlayerController:Client_TalentJobSync(State, WorkerId, EndTime, RewardTotal, RewardSummary, RemainingSec)
+    local SyncRemaining = tonumber(RemainingSec)
+    if SyncRemaining == nil then
+        SyncRemaining = math.max(0, math.floor((tonumber(EndTime) or 0) - NowSec()))
+    end
     self.ClientTalentJob = {
         State = math.floor(tonumber(State) or TALENT_JOB_IDLE),
         WorkerId = math.floor(tonumber(WorkerId) or 0),
         EndTime = math.floor(tonumber(EndTime) or 0),
         RewardTotal = math.floor(tonumber(RewardTotal) or 0),
         RewardSummary = tostring(RewardSummary or ""),
+        SyncRemainingSec = math.max(0, math.floor(SyncRemaining)),
+        SyncLocalTimeSec = LocalClockSec(),
     }
     if self.OnTalentJobChanged then
         pcall(self.OnTalentJobChanged)
@@ -2430,17 +2728,59 @@ function UGCPlayerController:Server_CollectTalentJob()
         SyncTalentJobToClient(self)
         return
     end
-    for ItemId, Count in pairs(Rewards) do
-        if not TryAddItems(self, ItemId, Count) then
-            InvokeClient(self, "Client_TalentMarketNotify", "发放矿物失败，请稍后重试")
-            SyncTalentJobToClient(self)
-            return
+    local Entries = BuildTalentRewardEntries(Rewards)
+    local DeliveredTotal = 0
+    local RemainingRewards = {}
+    local bBackpackFull = false
+    for _, Entry in ipairs(Entries) do
+        local ItemId = math.floor(tonumber(Entry.ItemId) or 0)
+        local Count = math.floor(tonumber(Entry.Count) or 0)
+        if Count > 0 then
+            if bBackpackFull then
+                RemainingRewards[ItemId] = (RemainingRewards[ItemId] or 0) + Count
+            else
+                local Ok, Added = TryAddTalentRewardToBackpack(self, ItemId, Count)
+                if not Ok then
+                    InvokeClient(self, "Client_TalentMarketNotify", "发放矿物失败，请稍后重试")
+                    SyncTalentJobToClient(self)
+                    return
+                end
+                DeliveredTotal = DeliveredTotal + math.floor(tonumber(Added) or 0)
+                if Added < Count then
+                    RemainingRewards[ItemId] = (RemainingRewards[ItemId] or 0) + (Count - Added)
+                    bBackpackFull = true
+                end
+            end
         end
     end
     local Worker = TalentMarketConfig.GetWorker(Job.WorkerId or 0) or {}
-    local Summary = TalentMarketConfig.FormatRewards(Rewards)
+    local Summary = FormatTalentRewardEntries(Entries)
+    local RemainingTotal = GetTalentRewardTotal(RemainingRewards)
+    if RemainingTotal > 0 then
+        Job.Rewards = RemainingRewards
+        Job.State = TALENT_JOB_READY
+        local RemainingSummary = FormatTalentRewardEntries(BuildTalentRewardEntries(RemainingRewards))
+        local Msg = string.format(
+            "%s奖励只领取了%d/%d个：%s；背包容量不足，剩余%d个待领取：%s",
+            tostring(Worker.Name or "矿工"),
+            DeliveredTotal,
+            Total,
+            Summary,
+            RemainingTotal,
+            RemainingSummary
+        )
+        ugcprint("[TalentMarket] " .. Msg)
+        InvokeClient(self, "Client_TalentMarketNotify", Msg)
+        SyncTalentJobToClient(self)
+        return
+    end
     self.TalentJob = nil
-    local Msg = string.format("%s带回%d个矿物：%s", tostring(Worker.Name or "矿工"), Total, Summary)
+    local Msg = string.format(
+        "%s带回%d个矿物：%s，已放入背包",
+        tostring(Worker.Name or "矿工"),
+        Total,
+        Summary
+    )
     ugcprint("[TalentMarket] " .. Msg)
     InvokeClient(self, "Client_TalentMarketNotify", Msg)
     SyncTalentJobToClient(self)
@@ -2954,6 +3294,10 @@ function UGCPlayerController:Server_RepairMiningVehicle(VehicleId)
     NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "维修完成，消耗 " .. tostring(Cost) .. " 金币")
 end
 
+function UGCPlayerController:Server_RepairVehicle(VehicleId)
+    self:Server_RepairMiningVehicle(VehicleId)
+end
+
 function UGCPlayerController:MarkMiningVehicleReturned(VehicleId)
     if UGCGameSystem.IsServer() then
         self:Server_EndMineCarTrip(VehicleId)
@@ -2980,6 +3324,10 @@ end
 
 function UGCPlayerController:RequestRepairMiningVehicle(VehicleId)
     InvokeServer(self, "Server_RepairMiningVehicle", VehicleId)
+end
+
+function UGCPlayerController:RequestRepairVehicle(VehicleId)
+    InvokeServer(self, "Server_RepairVehicle", VehicleId)
 end
 
 --- 矿石回收处：初始自动解锁，按策划价格表回收
@@ -3263,7 +3611,7 @@ function UGCPlayerController:GetAvailableServerRPCs()
         "Server_StartSmelt", "Server_SkipSmelt", "Server_CollectSmelt",
         "Server_UnlockTalentMarket", "Server_HireTalentWorker", "Server_CollectTalentJob",
         "Server_BeginMineCarTrip", "Server_EndMineCarTrip", "Server_UnlockVehicleRepair",
-        "Server_CheckVehicleReturn", "Server_RepairMiningVehicle",
+        "Server_CheckVehicleReturn", "Server_RepairMiningVehicle", "Server_RepairVehicle",
         "Server_RecycleOre", "Server_UpgradeWarehouse", "Server_BuyTool", "Server_UpgradeBackpack"
 end
 

@@ -18,6 +18,48 @@ local BACKPACK_LEVEL_CONFIG = {
 local COIN_ITEM_ID = 8310002
 
 local BP_BackpackComponentV2_Custom_Module = nil
+local function GetLocalPC()
+    if UGCGameSystem and UGCGameSystem.GetLocalPlayerController then
+        local Ok, PC = pcall(UGCGameSystem.GetLocalPlayerController)
+        if Ok and PC ~= nil then
+            return PC
+        end
+    end
+    return nil
+end
+
+local function GetLocalPawn()
+    if UGCGameSystem and UGCGameSystem.GetLocalPlayerPawn then
+        local Ok, Pawn = pcall(UGCGameSystem.GetLocalPlayerPawn)
+        if Ok and Pawn ~= nil then
+            return Pawn
+        end
+    end
+    return nil
+end
+
+local function ResolveBackpackPlayer(UIComponent)
+    local Owner = nil
+    if UIComponent ~= nil and UIComponent.GetOwner then
+        local OkOwner, RetOwner = pcall(function()
+            return UIComponent:GetOwner()
+        end)
+        if OkOwner then
+            Owner = RetOwner
+        end
+    end
+
+    local PC = GetLocalPC()
+    local Pawn = GetLocalPawn()
+    if PC == nil and Owner ~= nil and Owner.RequestUpgradeWarehouse ~= nil then
+        PC = Owner
+    end
+    if Pawn == nil and Owner ~= nil and Owner.UpdateSpeedByWeight ~= nil then
+        Pawn = Owner
+    end
+    return PC, Pawn or PC or Owner
+end
+
 local function GetBackpackComponentModule()
     if BP_BackpackComponentV2_Custom_Module == nil and UGCGameSystem and UGCGameSystem.UGCRequire then
         local Ok, Mod = pcall(UGCGameSystem.UGCRequire, "Script.GamePartCustom.BackpackV2.BP_BackpackComponentV2_Custom")
@@ -97,9 +139,12 @@ end
 ---生效范围：客户端
 ---@param DataType number @类型 [0:背包数据, 1:仓库数据]
 function BP_BackpackUIComponentV2_Custom:ClickLockBackpackItem(DataType)
-    local PlayerController = self:GetOwner()
-    local Player = PlayerController:GetPawn()
+    local PlayerController, Player = ResolveBackpackPlayer(self)
     DataType = math.floor(tonumber(DataType) or 0)
+    if Player == nil then
+        ugcprint("[背包UI] 未找到本机玩家，锁格点击忽略 DataType=", DataType)
+        return
+    end
 
     if DataType == 1 then
         local Cap = 0
@@ -131,7 +176,7 @@ end
 ---背包UI打开后执行
 ---@param Panel UUserWidget @背包主界面控件
 function BP_BackpackUIComponentV2_Custom:OnOpenBattleMainPanel(Panel)
-    local Player = self:GetOwner()
+    local _, Player = ResolveBackpackPlayer(self)
     local BackpackComponent = GetBackpackComponentModule()
     if BackpackComponent == nil or BackpackComponent.GetBackpackWeightInfo == nil then
         return

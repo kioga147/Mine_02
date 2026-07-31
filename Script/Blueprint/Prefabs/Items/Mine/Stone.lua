@@ -1,4 +1,4 @@
----@class Mine_01_C:Template_ItemHandle_C
+---@class Stone_C:Template_ItemHandle_C
 --Edit Below--
 local Stone = {} 
 

@@ -1,6 +1,6 @@
 ---@class UGCPlayerController_C:BP_PlayerController_TopDown_C
----@field BuffClassTable ULuaArrayHelper<UClass>
----@field BuffClassTable1 ULuaArrayHelper<UClass>
+---@field GiftPackComponent GiftPackComponent_C
+---@field ShopV2Component ShopV2Component_C
 --Edit Below--
 local MineTeleportConfig = nil
 do
@@ -349,6 +349,17 @@ do
     end
 end
 
+-- 付费/商业化系统
+local PaymentSystem = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire("Script.GamePartCustom.PaymentSystem")
+    end)
+    if Ok and type(Mod) == "table" then
+        PaymentSystem = Mod
+    end
+end
+
 -- 玉石鉴定逻辑对齐 TESTWK；物品 ID 使用 Mine_02 现有表：
 -- 8310011 = 玉矿石（未鉴定） Mine_10
 -- 8310018 = 玉石 Mine_17（兼容；当前与 8310011 同为可鉴定原料，鉴定出售直接发金币、不产出 8310018）
@@ -427,7 +438,7 @@ local function IsMineTeleportUnlocked(PC)
 end
 
 local function TeleportPawnTo(PC, X, Y, Z)
-    ugcprint(string.format("[Teleport] 🔄 开始传送 (%.0f,%.0f,%.0f)", X, Y, Z))
+    ugcprint(string.format("[Teleport] ? 开始传送 (%.0f,%.0f,%.0f)", X, Y, Z))
     
     ugcprint("[Teleport] ① ForceStopMineCarMode...")
     pcall(function()
@@ -666,6 +677,39 @@ function UGCPlayerController:ReceiveBeginPlay()
         end, false)
     end
 
+    -- 商店模板V2：通过 AddToViewport 添加"打开商城"调试按钮
+    local function InitShopV2TestButton(PC)
+        if not PC then return end
+
+        -- 加载商店模块
+        UGCGameSystem.UGCRequire("ExtendResource.ShopV2.OfficialPackage.Script.ShopV2.ShopV2Manager")
+        UGCGameSystem.UGCRequire("ExtendResource.ShopV2.OfficialPackage.Script.Common.Common")
+
+        -- 创建并注册主商店 UI
+        local MainUIClass = UE.LoadClass(UGCGameSystem.GetUGCResourcesFullPath(
+            "ExtendResource/ShopV2/OfficialPackage/Asset/ShopV2/Arts_UI/UIBP/ShopV2_MainUI_UIBP.ShopV2_MainUI_UIBP_C"))
+        if MainUIClass and ShopV2Manager then
+            local MainUI = UserWidget.NewWidgetObjectBP(PC, MainUIClass)
+            if MainUI then
+                MainUI:AddToViewport(10050)
+                MainUI:SetVisibility(ESlateVisibility.Collapsed)
+                ShopV2Manager:RegisterMainUI(MainUI)
+            end
+        end
+
+        -- 创建打开商城按钮
+        local ButtonClass = UE.LoadClass(UGCGameSystem.GetUGCResourcesFullPath(
+            "ExtendResource/ShopV2/OfficialPackage/Asset/ShopV2/Blueprint/ShopV2_OpenShopButton_UIBP.ShopV2_OpenShopButton_UIBP_C"))
+        if ButtonClass then
+            local Button = UserWidget.NewWidgetObjectBP(PC, ButtonClass)
+            if Button then
+                Button:AddToViewport(1000)
+                PC.ShopV2TestButton = Button
+                print("[ShopV2] 按钮已添加")
+            end
+        end
+    end
+
     local function InitLocalJoystick()
         if self.bLocalJoystickInit then
             return
@@ -686,6 +730,9 @@ function UGCPlayerController:ReceiveBeginPlay()
                 end
             end)
         end
+
+        -- 商店模板V2：通过 AddToViewport 添加"打开商城"调试按钮
+        InitShopV2TestButton(self)
     end
 
     -- 注意：进场不要创建鉴定 UI，否则会卡死
@@ -1203,7 +1250,7 @@ end
 
 function UGCPlayerController:Server_TeleportToMineZone(ZoneId)
     ZoneId = math.floor(tonumber(ZoneId) or 0)
-    ugcprint(string.format("[MineTeleport] 📥 收到传送请求: ZoneId=%d", ZoneId))
+    ugcprint(string.format("[MineTeleport] ? 收到传送请求: ZoneId=%d", ZoneId))
     local Zone = MineTeleportConfig.GetZone(ZoneId)
     if Zone == nil then
         ugcprint("[MineTeleport] ❌ 无效矿区 ID: " .. tostring(ZoneId))
@@ -1235,7 +1282,7 @@ function UGCPlayerController:Server_TeleportToMineZone(ZoneId)
         Zone.Name, Zone.PadX, Zone.PadY, Zone.PadZ))
 
     -- 优先通过客户端 RPC 执行传送（listen-server 下客户端拥有移动权限）
-    ugcprint("[MineTeleport] 📤 发送 Client_ExecuteTeleport RPC")
+    ugcprint("[MineTeleport] ? 发送 Client_ExecuteTeleport RPC")
     UnrealNetwork.CallUnrealRPC(
         self, self, "Client_ExecuteTeleport",
         Zone.PadX, Zone.PadY, Zone.PadZ
@@ -1265,7 +1312,7 @@ function UGCPlayerController:Client_ExecuteTeleport(X, Y, Z)
     X = tonumber(X) or 0
     Y = tonumber(Y) or 0
     Z = tonumber(Z) or 0
-    ugcprint(string.format("[Teleport-Client] 🚀 客户端执行传送 (%.0f,%.0f,%.0f)", X, Y, Z))
+    ugcprint(string.format("[Teleport-Client] ? 客户端执行传送 (%.0f,%.0f,%.0f)", X, Y, Z))
 
     local Pawn = nil
     if self.GetPlayerCharacterSafety then
@@ -1322,17 +1369,17 @@ function UGCPlayerController:RequestUnlockMineTeleport()
 end
 
 function UGCPlayerController:RequestTeleportToMineZone(ZoneId)
-    ugcprint(string.format("[MineTeleport] 📤 发送RPC请求: Server_TeleportToMineZone(%d)", ZoneId))
+    ugcprint(string.format("[MineTeleport] ? 发送RPC请求: Server_TeleportToMineZone(%d)", ZoneId))
     UnrealNetwork.CallUnrealRPC(self, self, "Server_TeleportToMineZone", ZoneId)
 end
 
 function UGCPlayerController:RequestReturnToSpawn()
-    ugcprint("[MineTeleport] 📤 发送RPC请求: Server_ReturnToSpawn")
+    ugcprint("[MineTeleport] ? 发送RPC请求: Server_ReturnToSpawn")
     UnrealNetwork.CallUnrealRPC(self, self, "Server_ReturnToSpawn")
 end
 
 function UGCPlayerController:Server_ReturnToSpawn()
-    ugcprint("[MineTeleport] 🏠 收到返回出生点请求")
+    ugcprint("[MineTeleport] ? 收到返回出生点请求")
 
     if not IsMineTeleportUnlocked(self) then
         ugcprint("[MineTeleport] ❌ 传送大厅未解锁，无法返回出生点")
@@ -1348,10 +1395,10 @@ function UGCPlayerController:Server_ReturnToSpawn()
     local sy = spawnPoint and spawnPoint.Y or 0
     local sz = spawnPoint and spawnPoint.Z or 220
 
-    ugcprint(string.format("[MineTeleport] 🏠 返回出生点 (%.0f,%.0f,%.0f) - 免费", sx, sy, sz))
+    ugcprint(string.format("[MineTeleport] ? 返回出生点 (%.0f,%.0f,%.0f) - 免费", sx, sy, sz))
 
     -- 客户端 RPC 执行传送
-    ugcprint("[MineTeleport] 📤 发送 Client_ExecuteTeleport RPC")
+    ugcprint("[MineTeleport] ? 发送 Client_ExecuteTeleport RPC")
     UnrealNetwork.CallUnrealRPC(
         self, self, "Client_ExecuteTeleport", sx, sy, sz
     )
@@ -2966,7 +3013,8 @@ function UGCPlayerController:GetAvailableServerRPCs()
         "Server_UnlockMineTeleport", "Server_TeleportToMineZone", "Server_ReturnToSpawn",
         "Server_UnlockSmeltingPlant", "Server_UpgradeSmeltingPlant", "Server_UnlockFurnace",
         "Server_StartSmelt", "Server_SkipSmelt", "Server_CollectSmelt",
-        "Server_RecycleOre","Server_UpgradeWarehouse","Server_BuyTool","Server_UpgradeBackpack"
+        "Server_RecycleOre","Server_UpgradeWarehouse","Server_BuyTool","Server_UpgradeBackpack",
+        "Server_PaymentGiveItem", "Server_PaymentUpgradeBackpack"
 end
 
 function UGCPlayerController:GetAvailableClientRPCs()
@@ -2982,7 +3030,8 @@ function UGCPlayerController:GetAvailableClientRPCs()
         "Client_VehicleRepairNotify", "Client_VehicleRepairUnlocked", "Client_VehicleRepairState", "Client_ForceStopMineCarMode",
         "Client_OreRecycleNotify",
         "Client_WarehouseNotify",
-        "Client_ShopNotify"
+        "Client_ShopNotify",
+        "Client_PaymentNotify"
 end
 
 -- ============ 矿工百货商店 RPC ============
@@ -3105,6 +3154,134 @@ function UGCPlayerController:GetReplicatedProperties()
     return "bJadeShopUnlocked", "bMineTeleportUnlocked",
         "bSmelterUnlocked", "SmelterPlantLevel", "UnlockedFurnaceCount",
         "BackpackLevel"
+end
+
+-- ============ 付费/商业化 RPC ============
+
+--- 客户端发起购买商品（绿洲币）
+--- @param ProductId number 商品ID，如 9000001
+--- @param Count number 购买数量，通常为1
+function UGCPlayerController:RequestBuyProduct(ProductId, Count)
+    ProductId = math.floor(tonumber(ProductId) or 0)
+    Count = math.floor(tonumber(Count) or 1)
+    if PaymentSystem and PaymentSystem.BuyProduct then
+        PaymentSystem.BuyProduct(ProductId, Count)
+    else
+        InvokeClient(self, "Client_PaymentNotify", "付费系统不可用")
+    end
+end
+
+--- 客户端发起使用虚拟物品
+--- @param CommodityId number 虚拟物品ID，如 1001
+--- @param Count number 使用数量
+function UGCPlayerController:RequestUseCommodity(CommodityId, Count)
+    CommodityId = math.floor(tonumber(CommodityId) or 0)
+    Count = math.floor(tonumber(Count) or 1)
+    if PaymentSystem and PaymentSystem.UseCommodity then
+        PaymentSystem.UseCommodity(CommodityId, Count)
+    else
+        InvokeClient(self, "Client_PaymentNotify", "付费系统不可用")
+    end
+end
+
+--- 显示绿洲币充值入口UI（仅客户端）
+function UGCPlayerController:RequestShowRechargeUI()
+    if PaymentSystem and PaymentSystem.ShowRechargeUI then
+        PaymentSystem.ShowRechargeUI()
+    end
+end
+
+--- 获取绿洲币余额（客户端）
+function UGCPlayerController:GetOasisTicket()
+    if PaymentSystem and PaymentSystem.GetTicketCount then
+        return PaymentSystem.GetTicketCount()
+    end
+    return 0
+end
+
+--- 获取启元币余额
+function UGCPlayerController:GetActiveCoinCount()
+    if not UGCCommoditySystem or not UGCCommoditySystem.GetActiveCoin then
+        return 0
+    end
+    local ok, coin = pcall(UGCCommoditySystem.GetActiveCoin)
+    if ok then
+        return math.floor(tonumber(coin) or 0)
+    end
+    return 0
+end
+
+--- 获取已拥有的虚拟物品列表
+function UGCPlayerController:GetPaymentCommodityList()
+    if PaymentSystem and PaymentSystem.GetCommodityList then
+        return PaymentSystem.GetCommodityList()
+    end
+    return {}
+end
+
+--- 查询指定虚拟物品数量
+function UGCPlayerController:GetPaymentCommodityCount(CommodityId)
+    if PaymentSystem and PaymentSystem.GetCommodityCount then
+        return PaymentSystem.GetCommodityCount(CommodityId)
+    end
+    return 0
+end
+
+--- 服务端：商业化道具效果 - 给玩家物品
+function UGCPlayerController:Server_PaymentGiveItem(ItemId, Count)
+    if not UGCGameSystem.IsServer() then return end
+    ItemId = math.floor(tonumber(ItemId) or 0)
+    Count = math.floor(tonumber(Count) or 1)
+    if ItemId <= 0 then
+        InvokeClient(self, "Client_PaymentNotify", "物品ID无效")
+        return
+    end
+    if not UGCBackpackSystemV2 or not UGCBackpackSystemV2.AddItemV2 then
+        InvokeClient(self, "Client_PaymentNotify", "背包系统不可用")
+        return
+    end
+    local ok, err = pcall(function()
+        UGCBackpackSystemV2.AddItemV2(self, ItemId, Count)
+    end)
+    if ok then
+        ugcprint(string.format("[Payment] ✅ 商业化发放物品: ItemId=%d, Count=%d", ItemId, Count))
+        InvokeClient(self, "Client_PaymentNotify",
+            string.format("发放物品成功：ID=%d x%d", ItemId, Count))
+    else
+        ugcprint(string.format("[Payment] ❌ 发放物品失败: %s", tostring(err)))
+        InvokeClient(self, "Client_PaymentNotify", "发放物品失败")
+    end
+end
+
+--- 服务端：商业化道具效果 - 升级背包等级
+function UGCPlayerController:Server_PaymentUpgradeBackpack(TargetLevel)
+    if not UGCGameSystem.IsServer() then return end
+    TargetLevel = math.floor(tonumber(TargetLevel) or 3)
+    if not self.BackpackLevel then
+        self.BackpackLevel = 1
+    end
+    if self.BackpackLevel >= TargetLevel then
+        InvokeClient(self, "Client_PaymentNotify",
+            string.format("背包已经是 %d 级，无需升级", self.BackpackLevel))
+        return
+    end
+    self.BackpackLevel = TargetLevel
+    ugcprint(string.format("[Payment] ✅ 背包等级升级至 %d", TargetLevel))
+    InvokeClient(self, "Client_PaymentNotify",
+        string.format("背包升级成功：当前 %d 级", TargetLevel))
+    if self.OnBackpackLevelChanged then
+        pcall(self.OnBackpackLevelChanged)
+    end
+end
+
+--- 客户端：付费系统通知
+function UGCPlayerController:Client_PaymentNotify(Msg)
+    Msg = tostring(Msg or "")
+    self.PaymentLastMsg = Msg
+    ugcprint("[Payment] Notify: " .. Msg)
+    if self.OnPaymentNotify then
+        pcall(self.OnPaymentNotify, Msg)
+    end
 end
 
 return UGCPlayerController

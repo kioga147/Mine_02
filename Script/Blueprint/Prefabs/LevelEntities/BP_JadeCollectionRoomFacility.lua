@@ -1,59 +1,22 @@
----@class BP_PlayerWarehouseFacility_C:BP_OreRecycleFacility_C
+---@class BP_JadeCollectionRoomFacility_C:AActor
 ---@field BuildingMesh UStaticMeshComponent
 ---@field InteractTrigger USphereComponent
+---@field PromptAnchor USceneComponent
 ---@field DefaultSceneRoot1 USceneComponent
 ---@field DefaultSceneRoot USceneComponent
 --Edit Below--
---- 玩家仓库：初始自动解锁 50 格；升级 +100 格（5000 金 / 50 绿洲币）
---- 复用鉴定所 Prompt UI：升级 / 打开仓库 / 切换支付 / 关闭
-local WarehouseConfig = nil
-do
-    local Ok, Mod = pcall(function()
-        return UGCGameSystem.UGCRequire("Script.Common.WarehouseConfig")
-    end)
-    if Ok and type(Mod) == "table" then
-        WarehouseConfig = Mod
-    else
-        WarehouseConfig = {
-            InitialSlots = 50,
-            MaxSlots = 10050,
-            SlotsPerUpgrade = 100,
-            UpgradeGoldCost = 5000,
-            UpgradeOasisCost = 50,
-            GetUpgradeGoldCost = function()
-                return 5000
-            end,
-            GetUpgradeOasisCost = function()
-                return 50
-            end,
-            GetSlotsPerUpgrade = function()
-                return 100
-            end,
-            GetInitialSlots = function()
-                return 50
-            end,
-            GetMaxSlots = function()
-                return 10050
-            end,
-            CanUpgrade = function(CurrentCapacity)
-                CurrentCapacity = math.floor(tonumber(CurrentCapacity) or 0)
-                return (CurrentCapacity + 100) <= 10050
-            end,
-        }
-    end
-end
-
-local BP_PlayerWarehouseFacility = {
+local BP_JadeCollectionRoomFacility = {
     bLocalPlayerInside = false,
     bPromptDismissed = false,
     PromptWidget = nil,
     bPromptOpening = false,
     bOverlapBound = false,
-    PayType = 0, -- 0=金币 1=绿洲币
+    SelectedSlot = 1,
     RefreshTimer = nil,
 }
 
 local PROMPT_UI_PATH = "Asset/Blueprint/Prefabs/UI/WBP_JadeFacilityPrompt.WBP_JadeFacilityPrompt_C"
+local INTERACT_RADIUS = 250
 local PROMPT_SHOW_DISTANCE = 280
 local PROMPT_HIDE_DISTANCE = 430
 local PROMPT_REFRESH_INTERVAL = 0.5
@@ -64,10 +27,6 @@ local function IsLocalPlayerPawn(OtherActor)
     end
     local LocalPawn = UGCGameSystem.GetLocalPlayerPawn()
     return LocalPawn ~= nil and LocalPawn == OtherActor
-end
-
-local function GetInteractTrigger(self)
-    return self.InteractTrigger
 end
 
 local function GetLocalPC()
@@ -137,7 +96,7 @@ end
 local function SetText(Widget, Text)
     if Widget and Widget.SetText then
         pcall(function()
-            Widget:SetText(Text)
+            Widget:SetText(tostring(Text or ""))
         end)
     end
 end
@@ -157,14 +116,41 @@ local function SetVisible(Widget, bShow)
     end)
 end
 
-function BP_PlayerWarehouseFacility:ReceiveBeginPlay()
-    -- 不调用回收处父类 BeginPlay，避免绑定回收逻辑
-    self.PayType = 0
+local function SetEnabled(Widget, bEnabled)
+    if Widget and Widget.SetIsEnabled then
+        pcall(function()
+            Widget:SetIsEnabled(bEnabled == true)
+        end)
+    end
+end
+
+local function GetDisplayStateName(Status)
+    Status = Status or {}
+    if Status.CurrentStateName and tostring(Status.CurrentStateName) ~= "" then
+        return tostring(Status.CurrentStateName)
+    end
+    local Display = Status.CurrentDisplay or {}
+    local State = math.floor(tonumber(Display.State) or 0)
+    if State == 1 then
+        return "未鉴定玉石"
+    end
+    if State == 2 then
+        local Opened = math.floor(tonumber(Display.OpenedCount) or 0)
+        local Total = math.floor(tonumber(Display.TotalCells) or 25)
+        if Total > 0 and Opened >= Total then
+            return "完全鉴定玉石"
+        end
+        return "未完全鉴定玉石"
+    end
+    return "空展台"
+end
+
+function BP_JadeCollectionRoomFacility:ReceiveBeginPlay()
     self:StartRefreshTimer()
 
-    local Trigger = GetInteractTrigger(self)
+    local Trigger = self.InteractTrigger
     if Trigger == nil then
-        ugcprint("[Warehouse] InteractTrigger 缺失")
+        ugcprint("[JadeCollectionRoom] InteractTrigger missing")
         return
     end
     if self.bOverlapBound then
@@ -175,9 +161,9 @@ function BP_PlayerWarehouseFacility:ReceiveBeginPlay()
     pcall(function()
         Trigger.bGenerateOverlapEvents = true
         if Trigger.SetSphereRadius then
-            Trigger:SetSphereRadius(250, true)
+            Trigger:SetSphereRadius(INTERACT_RADIUS, true)
         elseif Trigger.SphereRadius ~= nil then
-            Trigger.SphereRadius = 250
+            Trigger.SphereRadius = INTERACT_RADIUS
         end
     end)
 
@@ -187,13 +173,13 @@ function BP_PlayerWarehouseFacility:ReceiveBeginPlay()
     if Trigger.OnComponentEndOverlap then
         Trigger.OnComponentEndOverlap:Add(self.OnTriggerEndOverlap, self)
     end
-    ugcprint("[Warehouse] Overlap 已绑定")
+    ugcprint("[JadeCollectionRoom] Overlap bound")
 end
 
-function BP_PlayerWarehouseFacility:ReceiveEndPlay()
+function BP_JadeCollectionRoomFacility:ReceiveEndPlay()
     self:StopRefreshTimer()
     self:UnbindPCCallbacks()
-    local Trigger = GetInteractTrigger(self)
+    local Trigger = self.InteractTrigger
     if Trigger and self.bOverlapBound then
         if Trigger.OnComponentBeginOverlap then
             pcall(function()
@@ -210,7 +196,7 @@ function BP_PlayerWarehouseFacility:ReceiveEndPlay()
     self:HidePrompt()
 end
 
-function BP_PlayerWarehouseFacility:OnTriggerBeginOverlap(
+function BP_JadeCollectionRoomFacility:OnTriggerBeginOverlap(
     OverlappedComponent, OtherActor, OtherComp, OtherBodyIndex, bFromSweep, SweepResult)
     if not IsLocalPlayerPawn(OtherActor) then
         return
@@ -222,25 +208,25 @@ function BP_PlayerWarehouseFacility:OnTriggerBeginOverlap(
         return
     end
     self.bLocalPlayerInside = true
-    ugcprint("[Warehouse] 本机玩家进入仓库")
     self:ShowPrompt()
 end
 
-function BP_PlayerWarehouseFacility:OnTriggerEndOverlap(
+function BP_JadeCollectionRoomFacility:OnTriggerEndOverlap(
     OverlappedComponent, OtherActor, OtherComp, OtherBodyIndex)
     if not IsLocalPlayerPawn(OtherActor) then
         return
     end
     self.bLocalPlayerInside = false
     self.bPromptDismissed = false
-    ugcprint("[Warehouse] 本机玩家离开仓库")
     self:HidePrompt()
 end
 
-function BP_PlayerWarehouseFacility:IsLocalPlayerNear(Distance)
+function BP_JadeCollectionRoomFacility:IsLocalPlayerNear(Distance)
     local LocalPawn = UGCGameSystem.GetLocalPlayerPawn()
     local PawnLoc = GetActorLocationSafe(LocalPawn)
-    local FacilityLoc = GetComponentLocationSafe(self.InteractTrigger) or GetActorLocationSafe(self)
+    local FacilityLoc = GetComponentLocationSafe(self.InteractTrigger)
+        or GetComponentLocationSafe(self.PromptAnchor)
+        or GetActorLocationSafe(self)
     local DistSq = GetDistanceSq(PawnLoc, FacilityLoc)
     if DistSq == nil then
         return false
@@ -248,7 +234,7 @@ function BP_PlayerWarehouseFacility:IsLocalPlayerNear(Distance)
     return DistSq <= Distance * Distance
 end
 
-function BP_PlayerWarehouseFacility:StartRefreshTimer()
+function BP_JadeCollectionRoomFacility:StartRefreshTimer()
     self:StopRefreshTimer()
     if UGCTimerUtility == nil or UGCTimerUtility.CreateLuaTimer == nil then
         return
@@ -280,7 +266,7 @@ function BP_PlayerWarehouseFacility:StartRefreshTimer()
     end
 end
 
-function BP_PlayerWarehouseFacility:StopRefreshTimer()
+function BP_JadeCollectionRoomFacility:StopRefreshTimer()
     local Handle = self.RefreshTimer
     self.RefreshTimer = nil
     if Handle ~= nil and UGCTimerUtility and UGCTimerUtility.RemoveLuaTimer then
@@ -290,32 +276,38 @@ function BP_PlayerWarehouseFacility:StopRefreshTimer()
     end
 end
 
-function BP_PlayerWarehouseFacility:BindPCCallbacks()
+function BP_JadeCollectionRoomFacility:BindPCCallbacks()
     local PC = GetLocalPC()
     if not PC then
         return
     end
     local Facility = self
-    PC.OnWarehouseNotify = function(Msg)
+    PC.OnJadeCollectionNotify = function()
+        if Facility.bLocalPlayerInside then
+            Facility:RefreshPromptUI()
+        end
+    end
+    PC.OnJadeCollectionSync = function()
         if Facility.bLocalPlayerInside then
             Facility:RefreshPromptUI()
         end
     end
 end
 
-function BP_PlayerWarehouseFacility:UnbindPCCallbacks()
+function BP_JadeCollectionRoomFacility:UnbindPCCallbacks()
     local PC = GetLocalPC()
     if not PC then
         return
     end
-    PC.OnWarehouseNotify = nil
+    PC.OnJadeCollectionNotify = nil
+    PC.OnJadeCollectionSync = nil
 end
 
-function BP_PlayerWarehouseFacility:GetStatus()
+function BP_JadeCollectionRoomFacility:GetStatus()
     local PC = GetLocalPC()
-    if PC and PC.GetWarehouseStatus then
+    if PC and PC.GetJadeCollectionStatus then
         local Ok, Status = pcall(function()
-            return PC:GetWarehouseStatus()
+            return PC:GetJadeCollectionStatus(self.SelectedSlot)
         end)
         if Ok and type(Status) == "table" then
             return Status
@@ -323,59 +315,47 @@ function BP_PlayerWarehouseFacility:GetStatus()
     end
     return {
         bUnlocked = true,
-        Capacity = WarehouseConfig.GetInitialSlots(),
-        MaxCapacity = WarehouseConfig.GetMaxSlots(),
-        GoldCount = 0,
-        OasisTicket = 0,
-        UpgradeGoldCost = WarehouseConfig.GetUpgradeGoldCost(),
-        UpgradeOasisCost = WarehouseConfig.GetUpgradeOasisCost(),
-        SlotsPerUpgrade = WarehouseConfig.GetSlotsPerUpgrade(),
-        bCanUpgrade = true,
-        LastMsg = PC and PC.WarehouseLastMsg or "",
+        SlotCount = 5,
+        SelectedSlot = self.SelectedSlot,
+        CurrentDisplay = { State = 0, Value = 0, OwnerName = "", OpenedCount = 0, TotalCells = 25 },
+        CurrentStateName = "空展台",
+        RawJadeCount = 0,
+        bHasCandidate = false,
+        CandidateValue = 0,
+        CandidateOpenedCount = 0,
+        CandidateTotalCells = 25,
+        LastMsg = PC and PC.JadeCollectionLastMsg or "",
     }
 end
 
-function BP_PlayerWarehouseFacility:ApplyLabels(Widget, Status)
-    if Widget == nil then
-        return
-    end
-    Status = Status or {}
-    local GoldCost = math.floor(tonumber(Status.UpgradeGoldCost) or WarehouseConfig.GetUpgradeGoldCost())
-    local OasisCost = math.floor(tonumber(Status.UpgradeOasisCost) or WarehouseConfig.GetUpgradeOasisCost())
-    local AddSlots = math.floor(tonumber(Status.SlotsPerUpgrade) or WarehouseConfig.GetSlotsPerUpgrade())
-    local bCanUpgrade = Status.bCanUpgrade ~= false
-
-    local UpgradeTxt
-    if not bCanUpgrade then
-        UpgradeTxt = "已达上限"
-    elseif self.PayType == 1 then
-        UpgradeTxt = string.format("升级 +%d (%d绿洲)", AddSlots, OasisCost)
-    else
-        UpgradeTxt = string.format("升级 +%d (%d金)", AddSlots, GoldCost)
-    end
-
-    SetText(GetW(Widget, "Txt_Unlock"), UpgradeTxt)
-    SetText(GetW(Widget, "Txt_Quick"), "打开仓库")
-    SetText(GetW(Widget, "Txt_Manual"), (self.PayType == 1) and "支付·绿洲币" or "支付·金币")
-    SetText(GetW(Widget, "Txt_Close"), "关闭")
-end
-
-function BP_PlayerWarehouseFacility:RefreshPromptUI()
+function BP_JadeCollectionRoomFacility:RefreshPromptUI()
     local Widget = self.PromptWidget
     if Widget == nil then
         return
     end
+
     local Status = self:GetStatus()
-    local FakeStatus = {
-        bUnlocked = true,
-        JadeCount = 1,
-        GoldCount = tonumber(Status.GoldCount) or 0,
-        QuickCost = 0,
-        LastMsg = "",
-    }
+    local Display = Status.CurrentDisplay or {}
+    local State = math.floor(tonumber(Display.State) or 0)
+    local bOccupied = State ~= 0
+    local Slot = math.floor(tonumber(Status.SelectedSlot) or self.SelectedSlot or 1)
+    local SlotCount = math.max(1, math.floor(tonumber(Status.SlotCount) or 5))
+    local RawCount = math.floor(tonumber(Status.RawJadeCount) or tonumber(Status.JadeCount) or 0)
+    local Value = math.floor(tonumber(Display.Value) or 0)
+    local OwnerName = tostring(Display.OwnerName or "")
+    local Opened = math.floor(tonumber(Display.OpenedCount) or 0)
+    local Total = math.max(1, math.floor(tonumber(Display.TotalCells) or 25))
+    local bHasCandidate = Status.bHasCandidate == true
+
     if Widget.RefreshShopState then
         pcall(function()
-            Widget:RefreshShopState(FakeStatus)
+            Widget:RefreshShopState({
+                bUnlocked = true,
+                JadeCount = math.max(1, RawCount),
+                GoldCount = 0,
+                QuickCost = 0,
+                LastMsg = "",
+            })
         end)
     end
 
@@ -385,45 +365,48 @@ function BP_PlayerWarehouseFacility:RefreshPromptUI()
     SetVisible(GetW(Widget, "Gap_Quick"), true)
     SetVisible(GetW(Widget, "Btn_Manual"), true)
     SetVisible(GetW(Widget, "Gap_Manual"), true)
+    SetVisible(GetW(Widget, "Btn_Close"), true)
+    SetVisible(GetW(Widget, "Gap_Close"), true)
 
-    local bCanUpgrade = Status.bCanUpgrade ~= false
-    local BtnUnlock = GetW(Widget, "Btn_Unlock")
-    if BtnUnlock and BtnUnlock.SetIsEnabled then
-        pcall(function()
-            BtnUnlock:SetIsEnabled(bCanUpgrade)
-        end)
-    end
-    local BtnQuick = GetW(Widget, "Btn_Quick")
-    if BtnQuick and BtnQuick.SetIsEnabled then
-        pcall(function()
-            BtnQuick:SetIsEnabled(true)
-        end)
-    end
-    local BtnManual = GetW(Widget, "Btn_Manual")
-    if BtnManual and BtnManual.SetIsEnabled then
-        pcall(function()
-            BtnManual:SetIsEnabled(true)
-        end)
-    end
+    SetText(GetW(Widget, "Txt_Unlock"), bOccupied and "取回玉石" or string.format("放入玉矿石 x%d", RawCount))
+    SetText(GetW(Widget, "Txt_Quick"), bHasCandidate and "展示鉴定玉石" or "无鉴定记录")
+    SetText(GetW(Widget, "Txt_Manual"), string.format("切换展台 %d/%d", Slot, SlotCount))
+    SetText(GetW(Widget, "Txt_Close"), "关闭")
 
-    self:ApplyLabels(Widget, Status)
+    local PrimaryText = string.format("放入玉石原石 x%d", RawCount)
+    if bOccupied then
+        if State == 2 then
+            PrimaryText = string.format("出售鉴定玉石 +%d金", Value)
+        else
+            PrimaryText = "取回玉石原石"
+        end
+    end
+    SetText(GetW(Widget, "Txt_Unlock"), PrimaryText)
 
-    local Cap = math.floor(tonumber(Status.Capacity) or 0)
-    local MaxCap = math.floor(tonumber(Status.MaxCapacity) or 0)
-    local Line = string.format(
-        "玩家仓库 · 已解锁 %d / %d 格 · 金 %d · 绿洲 %d",
-        Cap,
-        MaxCap,
-        tonumber(Status.GoldCount) or 0,
-        tonumber(Status.OasisTicket) or 0
-    )
-    if Status.LastMsg and Status.LastMsg ~= "" then
+    SetEnabled(GetW(Widget, "Btn_Unlock"), bOccupied or RawCount > 0)
+    SetEnabled(GetW(Widget, "Btn_Quick"), (not bOccupied) and bHasCandidate)
+    SetEnabled(GetW(Widget, "Btn_Manual"), SlotCount > 1)
+    SetEnabled(GetW(Widget, "Btn_Close"), true)
+
+    local Line = string.format("玉石收藏室 · 展台 %d/%d · %s", Slot, SlotCount, GetDisplayStateName(Status))
+    if bOccupied then
+        Line = Line .. string.format("\n当前价格：%d 金币 · 所有者：%s", Value, OwnerName ~= "" and OwnerName or "玩家")
+        if State == 2 then
+            Line = Line .. string.format(" · 鉴定 %d/%d", Opened, Total)
+        end
+    else
+        Line = Line .. string.format("\n背包玉石：%d", RawCount)
+        if bHasCandidate then
+            Line = Line .. string.format(" · 可展示鉴定价：%d 金币", math.floor(tonumber(Status.CandidateValue) or 0))
+        end
+    end
+    if Status.LastMsg and tostring(Status.LastMsg) ~= "" then
         Line = Line .. "\n" .. tostring(Status.LastMsg)
     end
     SetText(GetW(Widget, "Txt_Prompt"), Line)
 end
 
-function BP_PlayerWarehouseFacility:ShowPrompt()
+function BP_JadeCollectionRoomFacility:ShowPrompt()
     if self.PromptWidget ~= nil or self.bPromptOpening then
         if self.PromptWidget then
             self:RefreshPromptUI()
@@ -440,7 +423,7 @@ function BP_PlayerWarehouseFacility:ShowPrompt()
     UGCWidgetManagerSystem.CreateWidgetAsync(Path, function(Widget)
         self.bPromptOpening = false
         if not Widget then
-            ugcprint("[Warehouse] 提示 UI 创建失败")
+            ugcprint("[JadeCollectionRoom] prompt create failed")
             return
         end
         if not self.bLocalPlayerInside or self.bPromptDismissed then
@@ -472,25 +455,30 @@ function BP_PlayerWarehouseFacility:ShowPrompt()
         if Widget.SetShopCallbacks then
             Widget:SetShopCallbacks({
                 OnUnlock = function()
-                    Facility:OnUpgradeClicked()
+                    Facility:OnPrimaryClicked()
                 end,
                 OnQuick = function()
-                    Facility:OnOpenWarehouseClicked()
+                    Facility:OnPlaceAppraisedClicked()
                 end,
                 OnManual = function()
-                    Facility:OnCyclePayClicked()
+                    Facility:OnCycleSlotClicked()
                 end,
                 OnClose = function()
                     Facility:OnCloseClicked()
                 end,
             })
         end
+
+        local PC = GetLocalPC()
+        if PC and PC.RequestSyncJadeCollection then
+            PC:RequestSyncJadeCollection()
+        end
         self:RefreshPromptUI()
-        ugcprint("[Warehouse] 仓库面板已显示")
+        ugcprint("[JadeCollectionRoom] prompt shown")
     end)
 end
 
-function BP_PlayerWarehouseFacility:HidePrompt()
+function BP_JadeCollectionRoomFacility:HidePrompt()
     self.bPromptOpening = false
     self:UnbindPCCallbacks()
     local Widget = self.PromptWidget
@@ -510,55 +498,60 @@ function BP_PlayerWarehouseFacility:HidePrompt()
     end
 end
 
-function BP_PlayerWarehouseFacility:OnCloseClicked()
+function BP_JadeCollectionRoomFacility:OnCloseClicked()
     self.bPromptDismissed = true
     self:HidePrompt()
 end
 
-function BP_PlayerWarehouseFacility:OnCyclePayClicked()
+function BP_JadeCollectionRoomFacility:OnPrimaryClicked()
     if not self.bLocalPlayerInside then
         return
     end
-    self.PayType = (self.PayType == 0) and 1 or 0
-    ugcprint("[Warehouse] 切换支付 -> " .. ((self.PayType == 1) and "绿洲币" or "金币"))
+    local PC = GetLocalPC()
+    if PC == nil then
+        return
+    end
+    local Status = self:GetStatus()
+    local Display = Status.CurrentDisplay or {}
+    local State = math.floor(tonumber(Display.State) or 0)
+    if State ~= 0 then
+        if PC.RequestClearJadeCollectionSlot then
+            PC:RequestClearJadeCollectionSlot(self.SelectedSlot)
+        else
+            UnrealNetwork.CallUnrealRPC(PC, PC, "Server_ClearJadeCollectionSlot", self.SelectedSlot)
+        end
+        return
+    end
+    if PC.RequestPlaceRawJadeInCollection then
+        PC:RequestPlaceRawJadeInCollection(self.SelectedSlot)
+    else
+        UnrealNetwork.CallUnrealRPC(PC, PC, "Server_PlaceRawJadeInCollection", self.SelectedSlot)
+    end
+end
+
+function BP_JadeCollectionRoomFacility:OnPlaceAppraisedClicked()
+    if not self.bLocalPlayerInside then
+        return
+    end
+    local PC = GetLocalPC()
+    if PC == nil then
+        return
+    end
+    if PC.RequestPlaceManualJadeInCollection then
+        PC:RequestPlaceManualJadeInCollection(self.SelectedSlot)
+    else
+        UnrealNetwork.CallUnrealRPC(PC, PC, "Server_PlaceManualJadeInCollection", self.SelectedSlot)
+    end
+end
+
+function BP_JadeCollectionRoomFacility:OnCycleSlotClicked()
+    local Status = self:GetStatus()
+    local SlotCount = math.max(1, math.floor(tonumber(Status.SlotCount) or 5))
+    self.SelectedSlot = math.floor(tonumber(self.SelectedSlot) or 1) + 1
+    if self.SelectedSlot > SlotCount then
+        self.SelectedSlot = 1
+    end
     self:RefreshPromptUI()
 end
 
-function BP_PlayerWarehouseFacility:OnUpgradeClicked()
-    if not self.bLocalPlayerInside then
-        return
-    end
-    local PC = GetLocalPC()
-    if PC == nil then
-        return
-    end
-    local PayType = self.PayType
-    ugcprint("[Warehouse] 请求升级 PayType=" .. tostring(PayType))
-    if PC.RequestUpgradeWarehouse then
-        PC:RequestUpgradeWarehouse(PayType)
-    else
-        UnrealNetwork.CallUnrealRPC(PC, PC, "Server_UpgradeWarehouse", PayType)
-    end
-end
-
-function BP_PlayerWarehouseFacility:OnOpenWarehouseClicked()
-    if not self.bLocalPlayerInside then
-        return
-    end
-    local PC = GetLocalPC()
-    if PC == nil then
-        return
-    end
-    ugcprint("[Warehouse] 打开仓库面板")
-    if PC.OpenWarehousePanel then
-        PC:OpenWarehousePanel()
-    elseif UGCBackpackSystemV2 and UGCBackpackSystemV2.OpenBackpackPanelStyle then
-        UGCBackpackSystemV2.OpenBackpackPanelStyle(nil, 2)
-    elseif UGCBackpackSystemV2 and UGCBackpackSystemV2.OpenBackpackPanel then
-        UGCBackpackSystemV2.OpenBackpackPanel(2)
-    end
-    -- 打开仓库后收起 Prompt，避免挡操作
-    self:HidePrompt()
-end
-
-return BP_PlayerWarehouseFacility
+return BP_JadeCollectionRoomFacility

@@ -16,7 +16,7 @@
 --- 模式选择层：解锁 / 快速鉴定 / 手动鉴定 / 关闭（不直接进 5×5）
 local WBP_JadeFacilityPrompt = {
     bBound = false,
-    Callbacks = nil, -- { OnUnlock, OnQuick, OnManual, OnClose }
+    Callbacks = nil, -- { OnEnter, OnUnlock, OnQuick, OnManual, OnClose }
 }
 
 local function GetW(self, Name)
@@ -259,6 +259,10 @@ function WBP_JadeFacilityPrompt:Construct()
     if BtnUnlock and BtnUnlock.OnClicked then
         BtnUnlock.OnClicked:Add(self.OnUnlockClicked, self)
     end
+    local BtnEnter = GetW(self, "Btn_Enter")
+    if BtnEnter and BtnEnter.OnClicked then
+        BtnEnter.OnClicked:Add(self.OnEnterClicked, self)
+    end
     local BtnQuick = GetW(self, "Btn_Quick")
     if BtnQuick and BtnQuick.OnClicked then
         BtnQuick.OnClicked:Add(self.OnQuickClicked, self)
@@ -279,6 +283,7 @@ end
 
 function WBP_JadeFacilityPrompt:Destruct()
     local pairsList = {
+        { "Btn_Enter", "OnEnterClicked" },
         { "Btn_Unlock", "OnUnlockClicked" },
         { "Btn_Quick", "OnQuickClicked" },
         { "Btn_Manual", "OnManualClicked" },
@@ -330,11 +335,15 @@ end
 -- 兼容旧接口
 function WBP_JadeFacilityPrompt:SetEnterCallback(Callback)
     self.Callbacks = self.Callbacks or {}
-    self.Callbacks.OnManual = Callback
+    self.Callbacks.OnEnter = Callback
 end
 
 function WBP_JadeFacilityPrompt:OnEnterClicked()
-    self:OnManualClicked()
+    if self.Callbacks and self.Callbacks.OnEnter then
+        pcall(self.Callbacks.OnEnter)
+    else
+        self:OnManualClicked()
+    end
 end
 
 return WBP_JadeFacilityPrompt

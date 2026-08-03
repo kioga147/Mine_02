@@ -124,6 +124,49 @@ do
     end
 end
 
+local JadeCollectionConfig = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire("Script.Common.JadeCollectionConfig")
+    end)
+    if Ok and type(Mod) == "table" then
+        JadeCollectionConfig = Mod
+    else
+        JadeCollectionConfig = {
+            SlotCount = 5,
+            BaseValue = 600,
+            StateEmpty = 0,
+            StateRaw = 1,
+            StateAppraised = 2,
+            TotalCells = 25,
+            GetSlotCount = function()
+                return 5
+            end,
+            GetBaseValue = function()
+                return 600
+            end,
+            GetTotalCells = function()
+                return 25
+            end,
+            GetStateName = function(State, OpenedCount, TotalCells)
+                State = math.floor(tonumber(State) or 0)
+                OpenedCount = math.floor(tonumber(OpenedCount) or 0)
+                TotalCells = math.floor(tonumber(TotalCells) or 25)
+                if State == 1 then
+                    return "Raw Jade"
+                end
+                if State == 2 then
+                    if TotalCells > 0 and OpenedCount >= TotalCells then
+                        return "Fully Appraised Jade"
+                    end
+                    return "Partially Appraised Jade"
+                end
+                return "Empty Slot"
+            end,
+        }
+    end
+end
+
 local TalentMarketConfig = nil
 do
     local Ok, Mod = pcall(function()
@@ -137,9 +180,9 @@ do
             GoldItemId = 8310002,
             WorkerOrder = { 1, 2, 3 },
             Workers = {
-                [1] = { Name = "低级工人", HireCost = 1000, DurationSec = 1800, RewardCount = 50, MinMineLevel = 1, MaxMineLevel = 3 },
-                [2] = { Name = "中级工人", HireCost = 10000, DurationSec = 1800, RewardCount = 100, MinMineLevel = 1, MaxMineLevel = 4 },
-                [3] = { Name = "高级矿工", HireCost = 100000, DurationSec = 900, RewardCount = 200, MinMineLevel = 3, MaxMineLevel = 5 },
+                [1] = { Name = "低级工人", HireCost = 1000, DurationSec = 60, RewardCount = 50, MinMineLevel = 1, MaxMineLevel = 3 },
+                [2] = { Name = "中级工人", HireCost = 10000, DurationSec = 60, RewardCount = 100, MinMineLevel = 1, MaxMineLevel = 4 },
+                [3] = { Name = "高级矿工", HireCost = 100000, DurationSec = 60, RewardCount = 200, MinMineLevel = 3, MaxMineLevel = 5 },
             },
             OrePool = {
                 { ItemId = 8310000, Name = "石头", MineLevel = 1 },
@@ -263,7 +306,7 @@ do
             PlantUnlockCost = 10000,
             PlantUpgradeCost = 10000,
             MaxBatchCount = 50,
-            DurationSec = 600,
+            DurationSec = 60,
             SkipOasisCost = 50,
             CoalItemId = 8310003,
             GoldItemId = 8310002,
@@ -606,6 +649,213 @@ local function InvokeServer(PC, FuncName, ...)
     UnrealNetwork.CallUnrealRPC(PC, PC, FuncName, ...)
 end
 
+local function GetJadeCollectionSlotCount()
+    if JadeCollectionConfig and JadeCollectionConfig.GetSlotCount then
+        return math.max(1, math.floor(tonumber(JadeCollectionConfig.GetSlotCount()) or 5))
+    end
+    return 5
+end
+
+local function GetJadeCollectionTotalCells()
+    if JadeCollectionConfig and JadeCollectionConfig.GetTotalCells then
+        return math.max(1, math.floor(tonumber(JadeCollectionConfig.GetTotalCells()) or JADE_CELL_COUNT))
+    end
+    return JADE_CELL_COUNT
+end
+
+local function GetJadeCollectionBaseValue()
+    if JadeCollectionConfig and JadeCollectionConfig.GetBaseValue then
+        return math.max(0, math.floor(tonumber(JadeCollectionConfig.GetBaseValue()) or JADE_BASE_VALUE))
+    end
+    return JADE_BASE_VALUE
+end
+
+local function ClampJadeCollectionSlot(Slot)
+    local SlotCount = GetJadeCollectionSlotCount()
+    Slot = math.floor(tonumber(Slot) or 1)
+    if Slot < 1 then
+        Slot = 1
+    elseif Slot > SlotCount then
+        Slot = SlotCount
+    end
+    return Slot
+end
+
+local function GetJadeOwnerName(PC)
+    if PC then
+        if PC.PlayerState ~= nil then
+            local Ok, Name = pcall(function()
+                if PC.PlayerState.GetPlayerName then
+                    return PC.PlayerState:GetPlayerName()
+                end
+                return PC.PlayerState.PlayerName
+            end)
+            if Ok and Name ~= nil and tostring(Name) ~= "" then
+                return tostring(Name)
+            end
+        end
+        local Ok, Name = pcall(function()
+            if PC.GetName then
+                return PC:GetName()
+            end
+            return nil
+        end)
+        if Ok and Name ~= nil and tostring(Name) ~= "" then
+            return tostring(Name)
+        end
+    end
+    return "玩家"
+end
+
+local function CountOpenedJadeCells(Opened)
+    local Count = 0
+    if type(Opened) == "table" then
+        for _ in pairs(Opened) do
+            Count = Count + 1
+        end
+    end
+    return Count
+end
+
+local function CreateJadeCollectionDisplay(State, Value, OwnerName, OpenedCount, TotalCells)
+    return {
+        State = math.floor(tonumber(State) or 0),
+        Value = math.max(0, math.floor(tonumber(Value) or 0)),
+        OwnerName = tostring(OwnerName or ""),
+        OpenedCount = math.max(0, math.floor(tonumber(OpenedCount) or 0)),
+        TotalCells = math.max(1, math.floor(tonumber(TotalCells) or GetJadeCollectionTotalCells())),
+    }
+end
+
+local function EnsureJadeCollectionDisplays(PC)
+    if not PC then
+        return {}
+    end
+    local SlotCount = GetJadeCollectionSlotCount()
+    if type(PC.JadeCollectionDisplays) ~= "table" then
+        PC.JadeCollectionDisplays = {}
+    end
+    for Slot = 1, SlotCount do
+        local Display = PC.JadeCollectionDisplays[Slot]
+        if type(Display) ~= "table" then
+            PC.JadeCollectionDisplays[Slot] = CreateJadeCollectionDisplay(
+                JadeCollectionConfig.StateEmpty, 0, "", 0, GetJadeCollectionTotalCells()
+            )
+        end
+    end
+    return PC.JadeCollectionDisplays
+end
+
+local function CopyJadeCollectionDisplays(Displays)
+    local Result = {}
+    local SlotCount = GetJadeCollectionSlotCount()
+    for Slot = 1, SlotCount do
+        local Display = Displays and Displays[Slot] or nil
+        if type(Display) ~= "table" then
+            Display = CreateJadeCollectionDisplay(JadeCollectionConfig.StateEmpty, 0, "", 0, GetJadeCollectionTotalCells())
+        end
+        Result[Slot] = CreateJadeCollectionDisplay(
+            Display.State,
+            Display.Value,
+            Display.OwnerName,
+            Display.OpenedCount,
+            Display.TotalCells
+        )
+    end
+    return Result
+end
+
+local function EncodeJadeCollectionDisplays(Displays)
+    local Parts = {}
+    local SlotCount = GetJadeCollectionSlotCount()
+    for Slot = 1, SlotCount do
+        local Display = Displays and Displays[Slot] or nil
+        if type(Display) ~= "table" then
+            Display = CreateJadeCollectionDisplay(JadeCollectionConfig.StateEmpty, 0, "", 0, GetJadeCollectionTotalCells())
+        end
+        local OwnerName = tostring(Display.OwnerName or "")
+        OwnerName = string.gsub(OwnerName, "[|,]", " ")
+        Parts[#Parts + 1] = table.concat({
+            tostring(Slot),
+            tostring(math.floor(tonumber(Display.State) or 0)),
+            tostring(math.floor(tonumber(Display.Value) or 0)),
+            tostring(math.floor(tonumber(Display.OpenedCount) or 0)),
+            tostring(math.floor(tonumber(Display.TotalCells) or GetJadeCollectionTotalCells())),
+            OwnerName,
+        }, ",")
+    end
+    return table.concat(Parts, "|")
+end
+
+local function DecodeJadeCollectionDisplays(Encoded)
+    local Displays = {}
+    Encoded = tostring(Encoded or "")
+    for Part in string.gmatch(Encoded, "([^|]+)") do
+        local SlotRaw, StateRaw, ValueRaw, OpenedRaw, TotalRaw, OwnerRaw =
+            string.match(Part, "^([^,]*),([^,]*),([^,]*),([^,]*),([^,]*),(.*)$")
+        local Slot = ClampJadeCollectionSlot(SlotRaw)
+        Displays[Slot] = CreateJadeCollectionDisplay(
+            tonumber(StateRaw) or 0,
+            tonumber(ValueRaw) or 0,
+            OwnerRaw or "",
+            tonumber(OpenedRaw) or 0,
+            tonumber(TotalRaw) or GetJadeCollectionTotalCells()
+        )
+    end
+    return CopyJadeCollectionDisplays(Displays)
+end
+
+local function GetJadeCollectionCandidate(PC)
+    local Session = GetManualSession(PC)
+    if Session then
+        return {
+            Value = math.max(0, math.floor(tonumber(Session.CurrentValue) or JADE_BASE_VALUE)),
+            OpenedCount = CountOpenedJadeCells(Session.Opened),
+            TotalCells = GetJadeCollectionTotalCells(),
+            bFromActiveSession = true,
+        }
+    end
+    local Candidate = PC and PC.JadeCollectionCandidate
+    if type(Candidate) ~= "table" and not UGCGameSystem.IsServer() then
+        Candidate = PC and PC.ClientJadeCollectionCandidate
+    end
+    if type(Candidate) ~= "table" then
+        return nil
+    end
+    return {
+        Value = math.max(0, math.floor(tonumber(Candidate.Value) or JADE_BASE_VALUE)),
+        OpenedCount = math.max(0, math.floor(tonumber(Candidate.OpenedCount) or 0)),
+        TotalCells = math.max(1, math.floor(tonumber(Candidate.TotalCells) or GetJadeCollectionTotalCells())),
+        bFromActiveSession = false,
+    }
+end
+
+local function SaveJadeCollectionCandidateFromSession(PC, Session)
+    if not PC or type(Session) ~= "table" then
+        return
+    end
+    PC.JadeCollectionCandidate = {
+        Value = math.max(0, math.floor(tonumber(Session.CurrentValue) or JADE_BASE_VALUE)),
+        OpenedCount = CountOpenedJadeCells(Session.Opened),
+        TotalCells = GetJadeCollectionTotalCells(),
+    }
+end
+
+local function SyncJadeCollectionToClient(PC)
+    local Displays = EnsureJadeCollectionDisplays(PC)
+    local Candidate = GetJadeCollectionCandidate(PC)
+    InvokeClient(
+        PC,
+        "Client_JadeCollectionSync",
+        GetJadeCollectionSlotCount(),
+        EncodeJadeCollectionDisplays(Displays),
+        Candidate ~= nil and 1 or 0,
+        Candidate and Candidate.Value or 0,
+        Candidate and Candidate.OpenedCount or 0,
+        Candidate and Candidate.TotalCells or GetJadeCollectionTotalCells()
+    )
+end
+
 local UGCPlayerController = {}
 
 function UGCPlayerController:OnStartFire(Press)
@@ -653,11 +903,35 @@ function UGCPlayerController:ReceiveBeginPlay()
     if self.ClientSmeltSlots == nil then
         self.ClientSmeltSlots = {}
     end
+    if self.JadeCollectionDisplays == nil then
+        self.JadeCollectionDisplays = {}
+    end
+    if self.ClientJadeCollectionDisplays == nil then
+        self.ClientJadeCollectionDisplays = {}
+    end
 
+    self.JadeCollectionCandidate = nil
     ClearManualSession(self)
 
     if UGCGameSystem.IsServer() then
-        self:EnsureWarehouseInitialCapacity()
+        self._WarehouseInitRetry = 0
+        local InitWarehouseLater = nil
+        InitWarehouseLater = function()
+            if not UGCObjectUtility.IsObjectValid(self) then
+                return
+            end
+            self:EnsureWarehouseInitialCapacity()
+            self._WarehouseInitRetry = (self._WarehouseInitRetry or 0) + 1
+            local Cap = 0
+            if UGCBackpackSystemV2 and UGCBackpackSystemV2.GetWarehouseCellCapacity then
+                local OkCap, RetCap = pcall(UGCBackpackSystemV2.GetWarehouseCellCapacity, self)
+                Cap = OkCap and math.floor(tonumber(RetCap) or 0) or 0
+            end
+            if self._WarehouseInitRetry < 5 and Cap < WarehouseConfig.GetInitialSlots() then
+                UGCTimerUtility.CreateLuaTimer(1.0, InitWarehouseLater, false)
+            end
+        end
+        UGCTimerUtility.CreateLuaTimer(1.0, InitWarehouseLater, false)
         -- 开局发放铜镐（迁自 Mine_03，延后等 Pawn/背包就绪）
         self._InitialPickaxeRetry = 0
         -- [Test] 1000000 gold
@@ -1013,11 +1287,16 @@ function UGCPlayerController:Server_BeginManualAppraisal()
         InvokeClient(self, "Client_JadeShopNotify", "背包中没有未鉴定玉石")
         return
     end
+    if not RemoveOneJade(self) then
+        InvokeClient(self, "Client_JadeShopNotify", "Jade consume failed")
+        return
+    end
     -- 每次进入手动鉴定都重建会话，与客户端新面板（BASE_VALUE / 空格）对齐
     self.JadeManualSession = {
         Active = true,
         CurrentValue = JADE_BASE_VALUE,
         Opened = {},
+        Consumed = true,
     }
     ugcprint("[Jade] 手动鉴定会话已创建 value=" .. tostring(JADE_BASE_VALUE))
     -- 关键：ListenServer 主机必须直调，否则鉴定 UI 不会出现
@@ -1073,15 +1352,18 @@ function UGCPlayerController:Server_SellAppraisedJade()
     if SellValue < 0 then
         SellValue = 0
     end
-    if not RemoveOneJade(self) then
-        ClearManualSession(self)
-        InvokeClient(self, "Client_JadeShopNotify", "出售失败：没有玉石")
-        InvokeClient(self, "Client_CloseJadeAppraisal")
-        return
+    if Session.Consumed ~= true then
+        if not RemoveOneJade(self) then
+            ClearManualSession(self)
+            InvokeClient(self, "Client_JadeShopNotify", "出售失败：没有玉石")
+            InvokeClient(self, "Client_CloseJadeAppraisal")
+            return
+        end
     end
     if SellValue > 0 then
         UGCBackpackSystemV2.AddItemV2(self, GOLD_ITEM_ID, SellValue)
     end
+    self.JadeCollectionCandidate = nil
     ClearManualSession(self)
     ugcprint("[Jade] 出售结算 value=" .. tostring(SellValue))
     InvokeClient(self, "Client_JadeShopNotify", "售出成功：获得 " .. tostring(SellValue) .. " 金币")
@@ -1091,7 +1373,10 @@ end
 --- 关闭面板不卖：清会话，不扣玉石
 --- 取消鉴定返回的物品需策划讨论（若改为开会话时扣玉，关闭时退回哪一 ItemID 待定）
 function UGCPlayerController:Server_CancelManualAppraisal()
+    SaveJadeCollectionCandidateFromSession(self, GetManualSession(self))
     ClearManualSession(self)
+    InvokeClient(self, "Client_JadeCollectionNotify", "Jade appraisal record saved for collection")
+    SyncJadeCollectionToClient(self)
     ugcprint("[Jade] 手动鉴定会话已取消")
     InvokeClient(self, "Client_CloseJadeAppraisal")
 end
@@ -1197,6 +1482,202 @@ end
 
 function UGCPlayerController:RequestCancelManualAppraisal()
     InvokeServer(self, "Server_CancelManualAppraisal")
+end
+
+--- ========== 玉石收藏室 ==========
+
+function UGCPlayerController:GetJadeCollectionStatus(SelectedSlot)
+    local Slot = ClampJadeCollectionSlot(SelectedSlot)
+    local Displays = self.ClientJadeCollectionDisplays
+    if UGCGameSystem.IsServer() then
+        Displays = EnsureJadeCollectionDisplays(self)
+    elseif type(Displays) ~= "table" then
+        Displays = {}
+    end
+    Displays = CopyJadeCollectionDisplays(Displays)
+
+    local CurrentDisplay = Displays[Slot] or CreateJadeCollectionDisplay(
+        JadeCollectionConfig.StateEmpty, 0, "", 0, GetJadeCollectionTotalCells()
+    )
+    local Candidate = GetJadeCollectionCandidate(self)
+    local StateName = "Empty Slot"
+    if JadeCollectionConfig and JadeCollectionConfig.GetStateName then
+        StateName = JadeCollectionConfig.GetStateName(
+            CurrentDisplay.State,
+            CurrentDisplay.OpenedCount,
+            CurrentDisplay.TotalCells
+        )
+    end
+
+    return {
+        bUnlocked = true,
+        SlotCount = GetJadeCollectionSlotCount(),
+        SelectedSlot = Slot,
+        Displays = Displays,
+        CurrentDisplay = CurrentDisplay,
+        CurrentStateName = StateName,
+        RawJadeCount = GetJadeCount(self),
+        JadeCount = GetJadeCount(self),
+        bHasCandidate = Candidate ~= nil,
+        CandidateValue = Candidate and Candidate.Value or 0,
+        CandidateOpenedCount = Candidate and Candidate.OpenedCount or 0,
+        CandidateTotalCells = Candidate and Candidate.TotalCells or GetJadeCollectionTotalCells(),
+        OwnerName = GetJadeOwnerName(self),
+        LastMsg = self.JadeCollectionLastMsg or "",
+    }
+end
+
+function UGCPlayerController:Client_JadeCollectionNotify(Msg)
+    Msg = tostring(Msg or "")
+    self.JadeCollectionLastMsg = Msg
+    ugcprint("[JadeCollection] Notify: " .. Msg)
+    if self.OnJadeCollectionNotify then
+        pcall(self.OnJadeCollectionNotify, Msg)
+    end
+end
+
+function UGCPlayerController:Client_JadeCollectionSync(
+    SlotCount, EncodedDisplays, HasCandidate, CandidateValue, CandidateOpenedCount, CandidateTotalCells)
+    SlotCount = math.max(1, math.floor(tonumber(SlotCount) or GetJadeCollectionSlotCount()))
+    self.ClientJadeCollectionSlotCount = SlotCount
+    self.ClientJadeCollectionDisplays = DecodeJadeCollectionDisplays(EncodedDisplays)
+    if math.floor(tonumber(HasCandidate) or 0) > 0 then
+        self.ClientJadeCollectionCandidate = {
+            Value = math.max(0, math.floor(tonumber(CandidateValue) or 0)),
+            OpenedCount = math.max(0, math.floor(tonumber(CandidateOpenedCount) or 0)),
+            TotalCells = math.max(1, math.floor(tonumber(CandidateTotalCells) or GetJadeCollectionTotalCells())),
+        }
+    else
+        self.ClientJadeCollectionCandidate = nil
+    end
+    if self.OnJadeCollectionSync then
+        pcall(self.OnJadeCollectionSync)
+    end
+end
+
+function UGCPlayerController:Server_RequestJadeCollectionSync()
+    SyncJadeCollectionToClient(self)
+end
+
+function UGCPlayerController:Server_PlaceRawJadeInCollection(Slot)
+    Slot = ClampJadeCollectionSlot(Slot)
+    local Displays = EnsureJadeCollectionDisplays(self)
+    local Existing = Displays[Slot]
+    if Existing and math.floor(tonumber(Existing.State) or 0) ~= JadeCollectionConfig.StateEmpty then
+        InvokeClient(self, "Client_JadeCollectionNotify", "Collection slot occupied")
+        SyncJadeCollectionToClient(self)
+        return
+    end
+    if GetJadeCount(self) < 1 or not RemoveOneJade(self) then
+        InvokeClient(self, "Client_JadeCollectionNotify", "No jade in backpack")
+        SyncJadeCollectionToClient(self)
+        return
+    end
+    Displays[Slot] = CreateJadeCollectionDisplay(
+        JadeCollectionConfig.StateRaw,
+        GetJadeCollectionBaseValue(),
+        GetJadeOwnerName(self),
+        0,
+        GetJadeCollectionTotalCells()
+    )
+    self.JadeCollectionLastMsg = "Raw jade placed"
+    SyncJadeCollectionToClient(self)
+    InvokeClient(self, "Client_JadeCollectionNotify", self.JadeCollectionLastMsg)
+end
+
+function UGCPlayerController:Server_PlaceManualJadeInCollection(Slot)
+    Slot = ClampJadeCollectionSlot(Slot)
+    local Displays = EnsureJadeCollectionDisplays(self)
+    local Existing = Displays[Slot]
+    if Existing and math.floor(tonumber(Existing.State) or 0) ~= JadeCollectionConfig.StateEmpty then
+        InvokeClient(self, "Client_JadeCollectionNotify", "Collection slot occupied")
+        SyncJadeCollectionToClient(self)
+        return
+    end
+    local Candidate = GetJadeCollectionCandidate(self)
+    if Candidate == nil then
+        InvokeClient(self, "Client_JadeCollectionNotify", "No appraisal record to display")
+        SyncJadeCollectionToClient(self)
+        return
+    end
+    Displays[Slot] = CreateJadeCollectionDisplay(
+        JadeCollectionConfig.StateAppraised,
+        Candidate.Value,
+        GetJadeOwnerName(self),
+        Candidate.OpenedCount,
+        Candidate.TotalCells
+    )
+    if Candidate.bFromActiveSession then
+        ClearManualSession(self)
+        InvokeClient(self, "Client_CloseJadeAppraisal")
+    end
+    self.JadeCollectionCandidate = nil
+    self.JadeCollectionLastMsg = "Appraised jade placed"
+    SyncJadeCollectionToClient(self)
+    InvokeClient(self, "Client_JadeCollectionNotify", self.JadeCollectionLastMsg)
+end
+
+function UGCPlayerController:Server_ClearJadeCollectionSlot(Slot)
+    Slot = ClampJadeCollectionSlot(Slot)
+    local Displays = EnsureJadeCollectionDisplays(self)
+    local Existing = Displays[Slot]
+    local State = Existing and math.floor(tonumber(Existing.State) or 0) or JadeCollectionConfig.StateEmpty
+    if Existing == nil or State == JadeCollectionConfig.StateEmpty then
+        InvokeClient(self, "Client_JadeCollectionNotify", "Collection slot is empty")
+        SyncJadeCollectionToClient(self)
+        return
+    end
+    local Msg = "玉石已取回"
+    if State == JadeCollectionConfig.StateAppraised then
+        local SellValue = math.max(0, math.floor(tonumber(Existing.Value) or 0))
+        if SellValue > 0 then
+            local Ok = pcall(function()
+                UGCBackpackSystemV2.AddItemV2(self, GOLD_ITEM_ID, SellValue)
+            end)
+            if not Ok then
+                InvokeClient(self, "Client_JadeCollectionNotify", "出售失败，请重试")
+                SyncJadeCollectionToClient(self)
+                return
+            end
+        end
+        Msg = "鉴定玉石已出售：+" .. tostring(SellValue) .. " 金币"
+    else
+        local Ok = pcall(function()
+            UGCBackpackSystemV2.AddItemV2(self, JADE_ITEM_ID, 1)
+        end)
+        if not Ok then
+            InvokeClient(self, "Client_JadeCollectionNotify", "取回失败，请重试")
+            SyncJadeCollectionToClient(self)
+            return
+        end
+        Msg = "玉石原石已取回"
+    end
+    Displays[Slot] = CreateJadeCollectionDisplay(
+        JadeCollectionConfig.StateEmpty,
+        0,
+        "",
+        0,
+        GetJadeCollectionTotalCells()
+    )
+    self.JadeCollectionLastMsg = Msg
+    SyncJadeCollectionToClient(self)
+    InvokeClient(self, "Client_JadeCollectionNotify", self.JadeCollectionLastMsg)
+end
+
+function UGCPlayerController:RequestSyncJadeCollection()
+    InvokeServer(self, "Server_RequestJadeCollectionSync")
+end
+
+function UGCPlayerController:RequestPlaceRawJadeInCollection(Slot)
+    InvokeServer(self, "Server_PlaceRawJadeInCollection", Slot)
+end
+
+function UGCPlayerController:RequestPlaceManualJadeInCollection(Slot)
+    InvokeServer(self, "Server_PlaceManualJadeInCollection", Slot)
+end
+
+function UGCPlayerController:RequestClearJadeCollectionSlot(Slot)
+    InvokeServer(self, "Server_ClearJadeCollectionSlot", Slot)
 end
 
 --- ========== 矿区传送大厅 ==========
@@ -1442,6 +1923,14 @@ local function NowSec()
     return tonumber(T) or 0
 end
 
+local function LocalClockSec()
+    local Ok, T = pcall(os.time)
+    if Ok then
+        return tonumber(T) or 0
+    end
+    return 0
+end
+
 local function GetOasisTicket()
     if UGCCommoditySystem == nil or UGCCommoditySystem.GetTicket == nil then
         return 0
@@ -1451,6 +1940,17 @@ local function GetOasisTicket()
         return math.floor(tonumber(Ticket) or 0)
     end
     return 0
+end
+
+local function FormatSmeltOasisR(Cost)
+    local N = math.floor(tonumber(Cost) or 0)
+    if N <= 0 then
+        return "0r"
+    end
+    if N % 10 == 0 then
+        return tostring(math.floor(N / 10)) .. "r"
+    end
+    return tostring(N) .. "绿洲币"
 end
 
 local function EnsureSmeltSessions(PC)
@@ -1475,16 +1975,30 @@ local function GetSmeltSlot(PC, Slot)
     return S
 end
 
-local function RefreshSmeltSlotState(SlotData)
+local function RefreshSmeltSlotState(SlotData, NowOverride)
     if SlotData == nil then
         return
     end
     if SlotData.State == SMELT_STATE_RUNNING then
         local EndTime = tonumber(SlotData.EndTime) or 0
-        if EndTime > 0 and NowSec() >= EndTime then
+        local CurTime = tonumber(NowOverride) or NowSec()
+        if EndTime > 0 and CurTime >= EndTime then
             SlotData.State = SMELT_STATE_READY
         end
     end
+end
+
+local function EstimateSmeltServerNow(PC)
+    if UGCGameSystem.IsServer() then
+        return NowSec()
+    end
+    local ServerBase = tonumber(PC and PC.SmeltServerNow) or 0
+    local LocalBase = tonumber(PC and PC.SmeltLocalSyncSec) or 0
+    if ServerBase > 0 and LocalBase > 0 then
+        local Elapsed = math.max(0, LocalClockSec() - LocalBase)
+        return ServerBase + Elapsed
+    end
+    return nil
 end
 
 local function IsSmelterUnlocked(PC)
@@ -1493,7 +2007,8 @@ end
 
 local function SyncSmeltSlotToClient(PC, Slot)
     local Data = GetSmeltSlot(PC, Slot)
-    RefreshSmeltSlotState(Data)
+    local ServerNow = NowSec()
+    RefreshSmeltSlotState(Data, ServerNow)
     UnrealNetwork.CallUnrealRPC(
         PC, PC, "Client_SmeltSlotSync",
         Slot,
@@ -1501,7 +2016,8 @@ local function SyncSmeltSlotToClient(PC, Slot)
         Data.InputId or 0,
         Data.Count or 0,
         Data.EndTime or 0,
-        Data.OutputId or 0
+        Data.OutputId or 0,
+        ServerNow
     )
 end
 
@@ -1539,6 +2055,166 @@ local function TryAddItems(PC, ItemId, Amount)
     return Ok and true or false
 end
 
+local function GetBackpackDefineIDsByItemId(PC, ItemId)
+    ItemId = math.floor(tonumber(ItemId) or 0)
+    if PC == nil or ItemId <= 0 or UGCBackpackSystemV2 == nil or UGCBackpackSystemV2.GetItemDefineIDsByIDV2 == nil then
+        return {}
+    end
+    local Ok, DefineIDs = pcall(UGCBackpackSystemV2.GetItemDefineIDsByIDV2, PC, ItemId)
+    if Ok and DefineIDs ~= nil then
+        return DefineIDs
+    end
+    return {}
+end
+
+local function GetDefineIDListCount(DefineIDs)
+    if DefineIDs == nil then
+        return 0
+    end
+    local Ok, Count = pcall(function()
+        return #DefineIDs
+    end)
+    if Ok then
+        return math.floor(tonumber(Count) or 0)
+    end
+    return 0
+end
+
+local function GetBackpackCountByDefineID(PC, DefineID)
+    if PC == nil or DefineID == nil or UGCBackpackSystemV2 == nil or UGCBackpackSystemV2.GetItemCountByDefineIDV2 == nil then
+        return 0
+    end
+    local Ok, Count = pcall(UGCBackpackSystemV2.GetItemCountByDefineIDV2, PC, DefineID)
+    if Ok then
+        return math.floor(tonumber(Count) or 0)
+    end
+    return 0
+end
+
+local function GetWarehouseItemCountSafe(PC, ItemId)
+    ItemId = math.floor(tonumber(ItemId) or 0)
+    if PC == nil or ItemId <= 0 or UGCBackpackSystemV2 == nil or UGCBackpackSystemV2.GetWarehouseItemCount == nil then
+        return 0
+    end
+    local Ok, Count = pcall(UGCBackpackSystemV2.GetWarehouseItemCount, PC, ItemId)
+    if Ok then
+        return math.floor(tonumber(Count) or 0)
+    end
+    return 0
+end
+
+local function GetWarehouseCapacitySafe(PC)
+    if PC == nil or UGCBackpackSystemV2 == nil or UGCBackpackSystemV2.GetWarehouseCellCapacity == nil then
+        return 0
+    end
+    local Ok, Cap = pcall(UGCBackpackSystemV2.GetWarehouseCellCapacity, PC)
+    if Ok then
+        return math.floor(tonumber(Cap) or 0)
+    end
+    return 0
+end
+
+local function EnsureInitialWarehouseCapacityForReward(PC)
+    if PC == nil or UGCBackpackSystemV2 == nil then
+        return
+    end
+    if UGCBackpackSystemV2.GetWarehouseCellCapacity == nil or UGCBackpackSystemV2.AddWarehouseCellCapacity == nil then
+        return
+    end
+    local Initial = 50
+    if WarehouseConfig ~= nil and WarehouseConfig.GetInitialSlots ~= nil then
+        Initial = WarehouseConfig.GetInitialSlots()
+    end
+    local Cap = GetWarehouseCapacitySafe(PC)
+    if Cap < Initial then
+        pcall(UGCBackpackSystemV2.AddWarehouseCellCapacity, PC, Initial - Cap)
+    end
+end
+
+local function TryMoveBackpackItemToWarehouse(PC, ItemId, Amount)
+    Amount = math.floor(tonumber(Amount) or 0)
+    ItemId = math.floor(tonumber(ItemId) or 0)
+    if Amount <= 0 or ItemId <= 0 then
+        return 0
+    end
+    if UGCBackpackSystemV2 == nil or UGCBackpackSystemV2.PutInWarehouse == nil then
+        return 0
+    end
+
+    EnsureInitialWarehouseCapacityForReward(PC)
+
+    local Before = GetWarehouseItemCountSafe(PC, ItemId)
+    local Remain = Amount
+    local DefineIDs = GetBackpackDefineIDsByItemId(PC, ItemId)
+    local MovedTotal = 0
+    for Index = 1, GetDefineIDListCount(DefineIDs) do
+        if Remain <= 0 then
+            break
+        end
+        local DefineID = DefineIDs[Index]
+        local StackCount = GetBackpackCountByDefineID(PC, DefineID)
+        if StackCount > 0 then
+            local MoveCount = math.min(StackCount, Remain)
+            local Ok, Ret = pcall(UGCBackpackSystemV2.PutInWarehouse, PC, DefineID, MoveCount)
+            if Ok and Ret ~= false then
+                MovedTotal = MovedTotal + MoveCount
+                Remain = math.max(0, Remain - MoveCount)
+            end
+            local After = GetWarehouseItemCountSafe(PC, ItemId)
+            local MovedNow = math.max(0, After - Before)
+            if MovedNow > MovedTotal then
+                MovedTotal = math.min(Amount, MovedNow)
+                Remain = math.max(0, Amount - MovedTotal)
+            end
+            if MovedTotal >= Amount then
+                return Amount
+            end
+        end
+    end
+    return math.max(0, math.min(Amount, MovedTotal))
+end
+
+local function TryAddItemsToWarehouseViaBackpack(PC, ItemId, Amount)
+    Amount = math.floor(tonumber(Amount) or 0)
+    ItemId = math.floor(tonumber(ItemId) or 0)
+    if Amount <= 0 or ItemId <= 0 then
+        return true, 0, 0
+    end
+    EnsureInitialWarehouseCapacityForReward(PC)
+    if GetWarehouseCapacitySafe(PC) <= 0 then
+        ugcprint("[TalentMarket] 仓库容量未初始化，停止发放 ItemId=" .. tostring(ItemId) .. " Amount=" .. tostring(Amount))
+        return true, 0, 0
+    end
+    local ExistingCount = GetItemCount(PC, ItemId)
+    if ExistingCount > 0 then
+        TryMoveBackpackItemToWarehouse(PC, ItemId, ExistingCount)
+    end
+    local TotalAdded = 0
+    local TotalMoved = 0
+    local Guard = 0
+    while TotalAdded < Amount and Guard < Amount + 8 do
+        Guard = Guard + 1
+        local RequestCount = Amount - TotalAdded
+        local Ok, AddedCount = pcall(function()
+            return UGCBackpackSystemV2.AddItemV2(PC, ItemId, RequestCount)
+        end)
+        if not Ok then
+            return false, TotalMoved, TotalAdded
+        end
+        AddedCount = math.floor(tonumber(AddedCount) or 0)
+        if AddedCount <= 0 then
+            break
+        end
+        TotalAdded = TotalAdded + AddedCount
+        local Moved = TryMoveBackpackItemToWarehouse(PC, ItemId, AddedCount)
+        TotalMoved = TotalMoved + Moved
+        if Moved < AddedCount then
+            break
+        end
+    end
+    return true, TotalMoved, TotalAdded
+end
+
 function UGCPlayerController:Client_SmeltNotify(Msg)
     Msg = tostring(Msg or "")
     self.SmeltLastMsg = Msg
@@ -1572,10 +2248,15 @@ function UGCPlayerController:Client_FurnaceCount(Count)
     end
 end
 
-function UGCPlayerController:Client_SmeltSlotSync(Slot, State, InputId, Count, EndTime, OutputId)
+function UGCPlayerController:Client_SmeltSlotSync(Slot, State, InputId, Count, EndTime, OutputId, ServerNow)
     Slot = math.floor(tonumber(Slot) or 0)
     if Slot < 1 or Slot > 5 then
         return
+    end
+    ServerNow = tonumber(ServerNow) or 0
+    if ServerNow > 0 then
+        self.SmeltServerNow = ServerNow
+        self.SmeltLocalSyncSec = LocalClockSec()
     end
     if self.ClientSmeltSlots == nil then
         self.ClientSmeltSlots = {}
@@ -1597,14 +2278,18 @@ function UGCPlayerController:GetSmeltingStatus()
     local FurnaceCount = math.floor(tonumber(self.UnlockedFurnaceCount) or 0)
     local Slots = {}
     local Source = self.ClientSmeltSlots
-    if UGCGameSystem.IsServer() then
+    local bServer = UGCGameSystem.IsServer()
+    local StatusNow = EstimateSmeltServerNow(self)
+    if bServer then
         EnsureSmeltSessions(self)
         Source = self.SmeltSessions
     end
     for Slot = 1, 5 do
         local Data = Source and Source[Slot] or nil
         if Data then
-            RefreshSmeltSlotState(Data)
+            if bServer or StatusNow ~= nil then
+                RefreshSmeltSlotState(Data, StatusNow)
+            end
             Slots[Slot] = {
                 State = Data.State or SMELT_STATE_IDLE,
                 InputId = Data.InputId or 0,
@@ -1634,6 +2319,7 @@ function UGCPlayerController:GetSmeltingStatus()
         SkipOasisCost = SmeltingConfig.SkipOasisCost,
         MaxBatch = SmeltingConfig.MaxBatchCount,
         DurationSec = SmeltingConfig.DurationSec,
+        ServerNow = StatusNow or 0,
         Slots = Slots,
         LastMsg = self.SmeltLastMsg or "",
     }
@@ -1723,14 +2409,14 @@ function UGCPlayerController:Server_UnlockFurnace(Slot, PayType)
         if GoldCost == nil then
             UnrealNetwork.CallUnrealRPC(
                 self, self, "Client_SmeltNotify",
-                "第5座冶炼炉仅可用 100 绿洲币解锁"
+                "第5座冶炼炉仅可用 " .. FormatSmeltOasisR(Cost.Oasis or 100) .. " 解锁"
             )
             return
         end
         if not TryRemoveGold(self, GoldCost) then
             UnrealNetwork.CallUnrealRPC(
                 self, self, "Client_SmeltNotify",
-                "金币不足，需要 " .. tostring(GoldCost) .. "（也可用 100 绿洲币）"
+                "金币不足，需要 " .. tostring(GoldCost) .. "（也可用 " .. FormatSmeltOasisR(Cost.Oasis or 100) .. "）"
             )
             return
         end
@@ -1763,14 +2449,14 @@ function UGCPlayerController:_ConsumeOasisOrReject(Cost, Reason)
     if HasAPI and Ticket < Cost then
         UnrealNetwork.CallUnrealRPC(
             self, self, "Client_SmeltNotify",
-            "绿洲币不足，" .. Reason .. "需要 " .. tostring(Cost) .. "（当前 " .. tostring(Ticket) .. "）"
+            "绿洲币不足，" .. Reason .. "需要 " .. FormatSmeltOasisR(Cost) .. "（当前 " .. tostring(Ticket) .. "绿洲币）"
         )
         return false
     end
     if not SmeltingConfig.AllowSoftOasisSpend then
         UnrealNetwork.CallUnrealRPC(
             self, self, "Client_SmeltNotify",
-            "请在 SmeltingConfig.OasisProductIds 配置绿洲币商品后购买（" .. Reason .. " " .. tostring(Cost) .. "）"
+            "请在 SmeltingConfig.OasisProductIds 配置绿洲币商品后购买（" .. Reason .. " " .. FormatSmeltOasisR(Cost) .. "）"
         )
         return false
     end
@@ -1900,6 +2586,7 @@ function UGCPlayerController:Server_CollectSmelt(Slot)
     local SlotData = GetSmeltSlot(self, Slot)
     RefreshSmeltSlotState(SlotData)
     if SlotData.State == SMELT_STATE_RUNNING then
+        SyncSmeltSlotToClient(self, Slot)
         UnrealNetwork.CallUnrealRPC(self, self, "Client_SmeltNotify", "精炼尚未完成")
         return
     end
@@ -2002,32 +2689,141 @@ local function GetTalentRewardTotal(Rewards)
     return Total
 end
 
+local function GetTalentRewardItemName(ItemId)
+    ItemId = math.floor(tonumber(ItemId) or 0)
+    for _, Ore in ipairs(TalentMarketConfig.OrePool or {}) do
+        if math.floor(tonumber(Ore.ItemId) or 0) == ItemId then
+            return tostring(Ore.Name or ItemId)
+        end
+    end
+    return tostring(ItemId)
+end
+
+local function BuildTalentRewardEntries(Rewards)
+    local Entries = {}
+    if type(Rewards) ~= "table" then
+        return Entries
+    end
+
+    local Seen = {}
+    for _, Ore in ipairs(TalentMarketConfig.OrePool or {}) do
+        local ItemId = math.floor(tonumber(Ore.ItemId) or 0)
+        local Count = math.floor(tonumber(Rewards[ItemId] or Rewards[tostring(ItemId)]) or 0)
+        if ItemId > 0 and Count > 0 then
+            Entries[#Entries + 1] = {
+                ItemId = ItemId,
+                Count = Count,
+                Name = tostring(Ore.Name or ItemId),
+            }
+            Seen[ItemId] = true
+        end
+    end
+
+    local ExtraEntries = {}
+    for RawItemId, RawCount in pairs(Rewards) do
+        local ItemId = math.floor(tonumber(RawItemId) or 0)
+        local Count = math.floor(tonumber(RawCount) or 0)
+        if ItemId > 0 and Count > 0 and not Seen[ItemId] then
+            ExtraEntries[#ExtraEntries + 1] = {
+                ItemId = ItemId,
+                Count = Count,
+                Name = GetTalentRewardItemName(ItemId),
+            }
+        end
+    end
+    table.sort(ExtraEntries, function(A, B)
+        return (A.ItemId or 0) < (B.ItemId or 0)
+    end)
+    for _, Entry in ipairs(ExtraEntries) do
+        Entries[#Entries + 1] = Entry
+    end
+
+    return Entries
+end
+
+local function FormatTalentRewardEntries(Entries)
+    if type(Entries) ~= "table" or #Entries <= 0 then
+        return "无"
+    end
+    local Names = {}
+    for _, Entry in ipairs(Entries) do
+        local Count = math.floor(tonumber(Entry.Count) or 0)
+        if Count > 0 then
+            Names[#Names + 1] = tostring(Entry.Name or GetTalentRewardItemName(Entry.ItemId)) .. " x" .. tostring(Count)
+        end
+    end
+    if #Names <= 0 then
+        return "无"
+    end
+    return table.concat(Names, "、")
+end
+
+local function TryAddTalentRewardToBackpack(PC, ItemId, Amount)
+    ItemId = math.floor(tonumber(ItemId) or 0)
+    Amount = math.floor(tonumber(Amount) or 0)
+    if ItemId <= 0 or Amount <= 0 then
+        return true, 0
+    end
+    if PC == nil or UGCBackpackSystemV2 == nil or UGCBackpackSystemV2.AddItemV2 == nil then
+        return false, 0
+    end
+
+    local Ok, AddedCount = pcall(UGCBackpackSystemV2.AddItemV2, PC, ItemId, Amount)
+    if not Ok then
+        ugcprint("[TalentMarket] AddItemV2 failed ItemId=" .. tostring(ItemId) .. " Amount=" .. tostring(Amount))
+        return false, 0
+    end
+
+    AddedCount = math.floor(tonumber(AddedCount) or 0)
+    AddedCount = math.max(0, math.min(Amount, AddedCount))
+    return true, AddedCount
+end
+
 local function SyncTalentJobToClient(PC)
     local Job = EnsureTalentJob(PC)
     RefreshTalentJobState(Job)
-    local Summary = TalentMarketConfig.FormatRewards(Job.Rewards or {})
+    local Summary = FormatTalentRewardEntries(BuildTalentRewardEntries(Job.Rewards or {}))
+    local RemainingSec = math.max(0, math.floor((tonumber(Job.EndTime) or 0) - NowSec()))
     InvokeClient(
         PC, "Client_TalentJobSync",
         Job.State or TALENT_JOB_IDLE,
         Job.WorkerId or 0,
         Job.EndTime or 0,
         GetTalentRewardTotal(Job.Rewards),
-        Summary
+        Summary,
+        RemainingSec
     )
 end
 
 function UGCPlayerController:GetTalentMarketStatus(WorkerId)
     local Job = EnsureTalentJob(self)
+    local bClientJob = false
     if not UGCGameSystem.IsServer() and type(self.ClientTalentJob) == "table" then
         Job = self.ClientTalentJob
+        bClientJob = true
     end
-    RefreshTalentJobState(Job)
+    local RemainingSec = 0
+    if bClientJob then
+        local SyncRemaining = tonumber(Job.SyncRemainingSec)
+        local SyncLocalTime = tonumber(Job.SyncLocalTimeSec)
+        if SyncRemaining ~= nil and SyncLocalTime ~= nil and SyncLocalTime > 0 then
+            local Elapsed = math.max(0, LocalClockSec() - SyncLocalTime)
+            RemainingSec = math.max(0, math.floor(SyncRemaining - Elapsed))
+        else
+            RemainingSec = math.max(0, math.floor((tonumber(Job.EndTime) or 0) - NowSec()))
+        end
+        if Job.State == TALENT_JOB_RUNNING and RemainingSec <= 0 then
+            Job.State = TALENT_JOB_READY
+        end
+    else
+        RefreshTalentJobState(Job)
+        RemainingSec = math.max(0, math.floor((tonumber(Job.EndTime) or 0) - NowSec()))
+    end
     WorkerId = math.floor(tonumber(WorkerId) or 0)
     if TalentMarketConfig.GetWorker(WorkerId) == nil then
         WorkerId = TalentMarketConfig.GetFirstWorkerId()
     end
     local Worker = TalentMarketConfig.GetWorker(WorkerId) or {}
-    local RemainingSec = math.max(0, math.floor((tonumber(Job.EndTime) or 0) - NowSec()))
     return {
         bUnlocked = IsTalentMarketUnlocked(self),
         UnlockCost = TalentMarketConfig.UnlockCost or 5000,
@@ -2067,13 +2863,19 @@ function UGCPlayerController:Client_TalentMarketUnlocked()
     end
 end
 
-function UGCPlayerController:Client_TalentJobSync(State, WorkerId, EndTime, RewardTotal, RewardSummary)
+function UGCPlayerController:Client_TalentJobSync(State, WorkerId, EndTime, RewardTotal, RewardSummary, RemainingSec)
+    local SyncRemaining = tonumber(RemainingSec)
+    if SyncRemaining == nil then
+        SyncRemaining = math.max(0, math.floor((tonumber(EndTime) or 0) - NowSec()))
+    end
     self.ClientTalentJob = {
         State = math.floor(tonumber(State) or TALENT_JOB_IDLE),
         WorkerId = math.floor(tonumber(WorkerId) or 0),
         EndTime = math.floor(tonumber(EndTime) or 0),
         RewardTotal = math.floor(tonumber(RewardTotal) or 0),
         RewardSummary = tostring(RewardSummary or ""),
+        SyncRemainingSec = math.max(0, math.floor(SyncRemaining)),
+        SyncLocalTimeSec = LocalClockSec(),
     }
     if self.OnTalentJobChanged then
         pcall(self.OnTalentJobChanged)
@@ -2184,17 +2986,59 @@ function UGCPlayerController:Server_CollectTalentJob()
         SyncTalentJobToClient(self)
         return
     end
-    for ItemId, Count in pairs(Rewards) do
-        if not TryAddItems(self, ItemId, Count) then
-            InvokeClient(self, "Client_TalentMarketNotify", "发放矿物失败，请稍后重试")
-            SyncTalentJobToClient(self)
-            return
+    local Entries = BuildTalentRewardEntries(Rewards)
+    local DeliveredTotal = 0
+    local RemainingRewards = {}
+    local bBackpackFull = false
+    for _, Entry in ipairs(Entries) do
+        local ItemId = math.floor(tonumber(Entry.ItemId) or 0)
+        local Count = math.floor(tonumber(Entry.Count) or 0)
+        if Count > 0 then
+            if bBackpackFull then
+                RemainingRewards[ItemId] = (RemainingRewards[ItemId] or 0) + Count
+            else
+                local Ok, Added = TryAddTalentRewardToBackpack(self, ItemId, Count)
+                if not Ok then
+                    InvokeClient(self, "Client_TalentMarketNotify", "发放矿物失败，请稍后重试")
+                    SyncTalentJobToClient(self)
+                    return
+                end
+                DeliveredTotal = DeliveredTotal + math.floor(tonumber(Added) or 0)
+                if Added < Count then
+                    RemainingRewards[ItemId] = (RemainingRewards[ItemId] or 0) + (Count - Added)
+                    bBackpackFull = true
+                end
+            end
         end
     end
     local Worker = TalentMarketConfig.GetWorker(Job.WorkerId or 0) or {}
-    local Summary = TalentMarketConfig.FormatRewards(Rewards)
+    local Summary = FormatTalentRewardEntries(Entries)
+    local RemainingTotal = GetTalentRewardTotal(RemainingRewards)
+    if RemainingTotal > 0 then
+        Job.Rewards = RemainingRewards
+        Job.State = TALENT_JOB_READY
+        local RemainingSummary = FormatTalentRewardEntries(BuildTalentRewardEntries(RemainingRewards))
+        local Msg = string.format(
+            "%s奖励只领取了%d/%d个：%s；背包容量不足，剩余%d个待领取：%s",
+            tostring(Worker.Name or "矿工"),
+            DeliveredTotal,
+            Total,
+            Summary,
+            RemainingTotal,
+            RemainingSummary
+        )
+        ugcprint("[TalentMarket] " .. Msg)
+        InvokeClient(self, "Client_TalentMarketNotify", Msg)
+        SyncTalentJobToClient(self)
+        return
+    end
     self.TalentJob = nil
-    local Msg = string.format("%s带回%d个矿物：%s", tostring(Worker.Name or "矿工"), Total, Summary)
+    local Msg = string.format(
+        "%s带回%d个矿物：%s，已放入背包",
+        tostring(Worker.Name or "矿工"),
+        Total,
+        Summary
+    )
     ugcprint("[TalentMarket] " .. Msg)
     InvokeClient(self, "Client_TalentMarketNotify", Msg)
     SyncTalentJobToClient(self)
@@ -2708,6 +3552,10 @@ function UGCPlayerController:Server_RepairMiningVehicle(VehicleId)
     NotifyVehicleRepair(self, tostring(Vehicle.Name or "采矿车") .. "维修完成，消耗 " .. tostring(Cost) .. " 金币")
 end
 
+function UGCPlayerController:Server_RepairVehicle(VehicleId)
+    self:Server_RepairMiningVehicle(VehicleId)
+end
+
 function UGCPlayerController:MarkMiningVehicleReturned(VehicleId)
     if UGCGameSystem.IsServer() then
         self:Server_EndMineCarTrip(VehicleId)
@@ -2734,6 +3582,10 @@ end
 
 function UGCPlayerController:RequestRepairMiningVehicle(VehicleId)
     InvokeServer(self, "Server_RepairMiningVehicle", VehicleId)
+end
+
+function UGCPlayerController:RequestRepairVehicle(VehicleId)
+    InvokeServer(self, "Server_RepairVehicle", VehicleId)
 end
 
 --- 矿石回收处：初始自动解锁，按策划价格表回收
@@ -3010,10 +3862,15 @@ end
 function UGCPlayerController:GetAvailableServerRPCs()
     return "Server_SellAppraisedJade", "Server_UnlockJadeShop", "Server_QuickAppraiseJade",
         "Server_BeginManualAppraisal", "Server_RevealJadeCell", "Server_CancelManualAppraisal",
+"Server_RequestJadeCollectionSync", "Server_PlaceRawJadeInCollection",
+        "Server_PlaceManualJadeInCollection", "Server_ClearJadeCollectionSlot",
         "Server_UnlockMineTeleport", "Server_TeleportToMineZone", "Server_ReturnToSpawn",
         "Server_UnlockSmeltingPlant", "Server_UpgradeSmeltingPlant", "Server_UnlockFurnace",
         "Server_StartSmelt", "Server_SkipSmelt", "Server_CollectSmelt",
-        "Server_RecycleOre","Server_UpgradeWarehouse","Server_BuyTool","Server_UpgradeBackpack",
+        "Server_UnlockTalentMarket", "Server_HireTalentWorker", "Server_CollectTalentJob",
+        "Server_BeginMineCarTrip", "Server_EndMineCarTrip", "Server_UnlockVehicleRepair",
+        "Server_CheckVehicleReturn", "Server_RepairMiningVehicle", "Server_RepairVehicle",
+        "Server_RecycleOre", "Server_UpgradeWarehouse", "Server_BuyTool", "Server_UpgradeBackpack",
         "Server_PaymentGiveItem", "Server_PaymentUpgradeBackpack"
 end
 
@@ -3021,6 +3878,7 @@ function UGCPlayerController:GetAvailableClientRPCs()
     return "Client_OpenJadeAppraisal", "Client_CloseJadeAppraisal",
         "Client_JadeShopNotify", "Client_JadeShopUnlocked", "Client_JadeQuickResult",
         "Client_JadeCellRevealed",
+        "Client_JadeCollectionNotify", "Client_JadeCollectionSync",
         "Client_MineTeleportNotify", "Client_MineTeleportUnlocked", "Client_MineTeleported",
         "Client_MineTeleportHallEntered", "Client_MineTeleportHallLeft",
         "Client_ExecuteTeleport", "Client_MineReturnedToSpawn",
@@ -3152,6 +4010,7 @@ end
 
 function UGCPlayerController:GetReplicatedProperties()
     return "bJadeShopUnlocked", "bMineTeleportUnlocked",
+        "bTalentMarketUnlocked", "bVehicleRepairUnlocked",
         "bSmelterUnlocked", "SmelterPlantLevel", "UnlockedFurnaceCount",
         "BackpackLevel"
 end

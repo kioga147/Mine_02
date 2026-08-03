@@ -117,6 +117,53 @@ local function SetText(Widget, Text)
     end
 end
 
+local function FitPromptText(Widget)
+    if Widget == nil then
+        return
+    end
+    if Widget.SetAutoWrapText then
+        pcall(function()
+            Widget:SetAutoWrapText(true)
+        end)
+    end
+    if Widget.SetWrapTextAt then
+        pcall(function()
+            Widget:SetWrapTextAt(1180)
+        end)
+    end
+    if Widget.SetClipping then
+        pcall(function()
+            Widget:SetClipping(1)
+        end)
+    end
+    if Widget.SetRenderScale then
+        pcall(function()
+            Widget:SetRenderScale({ X = 0.88, Y = 0.88 })
+        end)
+    end
+end
+
+local function ShortTalentMessage(Msg)
+    Msg = tostring(Msg or "")
+    if Msg == "" then
+        return ""
+    end
+    local Remain = string.match(Msg, "剩余(%d+)个")
+    if Remain ~= nil then
+        return "背包未装完：剩余" .. tostring(Remain) .. "个，清理后再领取"
+    end
+    if string.find(Msg, "已放入背包", 1, true) then
+        return "领取成功：矿物已放入背包"
+    end
+    if string.find(Msg, "已存入仓库", 1, true) then
+        return "领取成功：矿物已存入仓库"
+    end
+    if string.find(Msg, "带回", 1, true) and string.find(Msg, "矿物：", 1, true) then
+        return "领取成功：矿物已放入背包"
+    end
+    return Msg
+end
+
 local function ColorToHexRGB(C)
     local function Byte(V)
         local N = math.floor((V or 0) * 255 + 0.5)
@@ -449,9 +496,13 @@ function BP_TalentMarketFacility:RefreshPromptUI()
         )
     end
     if Status.LastMsg and Status.LastMsg ~= "" then
-        Line = Line .. "\n" .. tostring(Status.LastMsg)
+        local ShortMsg = ShortTalentMessage(Status.LastMsg)
+        if ShortMsg ~= "" then
+            Line = Line .. "\n" .. ShortMsg
+        end
     end
     local PromptText = GetW(Widget, "Txt_Prompt")
+    FitPromptText(PromptText)
     SetText(PromptText, Line)
     SetTextColor(PromptText, { R = 0.08, G = 0.10, B = 0.12, A = 1 })
 end
@@ -466,6 +517,9 @@ function BP_TalentMarketFacility:ShowPrompt()
     if self.PromptWidget ~= nil or self.bPromptOpening then
         if self.PromptWidget then
             self:RefreshPromptUI()
+            if self.RefreshTimer == nil then
+                self:StartRefreshTimer()
+            end
         end
         return
     end

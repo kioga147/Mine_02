@@ -67,7 +67,7 @@ SwitchesInMaps=((Key="r.Mobile.EnableIBL",Value=0),(Key="s.StreamableDelegateLim
 PlayBindingArray=[]
 
 [Input]
-UGCReservedAction_01=
+UGCReservedAction_01=Sprint
 UGCReservedAction_02=
 UGCReservedAction_03=
 UGCReservedAction_04=

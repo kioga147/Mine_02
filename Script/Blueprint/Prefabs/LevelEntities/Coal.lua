@@ -10,6 +10,7 @@ local Coal = {
 
 UGCGameSystem.UGCRequire('Script.GameAttribute.game_attribute_type')
 local MiningSystem = UGCGameSystem.UGCRequire('Script.GamePartCustom.MiningSystem')
+local MineTestDropConfig = UGCGameSystem.UGCRequire('Script.Common.MineTestDropConfig')
 local MineZoneManager = nil
 do
     local Ok, Mod = pcall(function()
@@ -108,6 +109,7 @@ function Coal:BPDie(KillingDamage, EventInstigator,DamageCauser,DamageEvent,Dama
             end
         end
         self.UGCPresetCommonDropItemComponent:StartDrop(self, EventInstigator, {})
+        MineTestDropConfig.GiveTestGold(EventInstigator)
     end
 end
 

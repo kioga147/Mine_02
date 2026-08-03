@@ -163,6 +163,7 @@ function MineZoneManager.RegisterOre(Actor, OreKey)
         return
     end
     if Actor == nil or OreKey == nil then
+        ugcprint("[MineZoneManager] RegisterOre: 参数 nil")
         return
     end
     if _bInitialized ~= true then
@@ -173,6 +174,7 @@ function MineZoneManager.RegisterOre(Actor, OreKey)
         return Actor:K2_GetActorLocation()
     end)
     if not (ok and loc) then
+        ugcprint("[MineZoneManager] RegisterOre: 获取位置失败")
         return
     end
 
@@ -182,6 +184,7 @@ function MineZoneManager.RegisterOre(Actor, OreKey)
 
     local zoneId = MineZoneManager._FindZoneByPosition(x, y, z)
     if zoneId == nil then
+        ugcprint(string.format("[MineZoneManager] RegisterOre: 位置(%.0f,%.0f)不在任何矿区", x, y))
         return
     end
 
@@ -191,6 +194,7 @@ function MineZoneManager.RegisterOre(Actor, OreKey)
 
     for _, entry in ipairs(ZONE_ACTORS[zoneId]) do
         if entry.Actor == Actor then
+            ugcprint(string.format("[MineZoneManager] RegisterOre: 矿石已在矿区%d中", zoneId))
             return
         end
     end
@@ -205,6 +209,9 @@ function MineZoneManager.RegisterOre(Actor, OreKey)
         OriginalY = y,
         OriginalZ = z,
     })
+
+    ugcprint(string.format("[MineZoneManager] RegisterOre: ✅ 矿区%d注册 %s at (%.0f,%.0f,%.0f) 总计=%d",
+        zoneId, OreKey, x, y, z, #ZONE_ACTORS[zoneId]))
 
     MineZoneManager._ScheduleSummary()
 end
@@ -325,13 +332,15 @@ function MineZoneManager.SpawnOreForRespawn(OreKey, X, Y, Z, ZoneId)
     end
 end
 
-function MineZoneManager.OnOreDestroyed(ZoneId, OreKey, Actor)
+function MineZoneManager.OnOreDestroyed(ZoneId, OreKey, Actor, EventInstigator)
     if not UGCGameSystem.IsServer() then
+        ugcprint("[MineZoneManager] OnOreDestroyed: 客户端调用，忽略")
         return
     end
 
     local zone = MineZoneConfig and MineZoneConfig.GetZone(ZoneId)
     if zone == nil then
+        ugcprint(string.format("[MineZoneManager] OnOreDestroyed: 矿区%d配置不存在", ZoneId))
         return
     end
 
@@ -345,49 +354,22 @@ function MineZoneManager.OnOreDestroyed(ZoneId, OreKey, Actor)
             if entry.Actor == Actor then
                 spawnInfo = entry
                 table.remove(ZONE_ACTORS[ZoneId], i)
+                ugcprint(string.format("[MineZoneManager] OnOreDestroyed: 找到矿石，矿区%d剩余=%d",
+                    ZoneId, #ZONE_ACTORS[ZoneId]))
                 break
             end
         end
     end
 
     if spawnInfo == nil then
+        ugcprint(string.format("[MineZoneManager] OnOreDestroyed: ⚠️ 未找到矿石 (zoneId=%d, oreKey=%s)",
+            ZoneId, tostring(OreKey)))
         return
     end
 
     local origX = spawnInfo.OriginalX or spawnInfo.X
     local origY = spawnInfo.OriginalY or spawnInfo.Y
     local origZ = spawnInfo.OriginalZ or spawnInfo.Z
-
-    -- 特殊掉落（玉矿石等）仍然独立处理
-    local bIsZoneOre = false
-    for _, oreEntry in ipairs(zone.OreDist or {}) do
-        if oreEntry.OreKey == OreKey then
-            bIsZoneOre = true
-            break
-        end
-    end
-
-    if bIsZoneOre then
-        local specialDrop = MineZoneConfig and MineZoneConfig.GetSpecialDrop(ZoneId)
-        if specialDrop and specialDrop.Chance and specialDrop.Chance > 0 then
-            local randomValue = math.random()
-            if randomValue < specialDrop.Chance then
-                ugcprint(string.format(
-                    "[MineZoneManager] ✨ 特殊掉落: %s (概率%.1f%%)",
-                    tostring(specialDrop.OreKey),
-                    specialDrop.Chance * 100
-                ))
-                MineZoneManager.SpawnOreForRespawn(
-                    specialDrop.OreKey, origX, origY, origZ, ZoneId
-                )
-            end
-        end
-    end
-
-    -- 非本矿区配置的矿石（如特殊掉落的奖励矿石）被挖取后不刷新
-    if not bIsZoneOre then
-        return
-    end
 
     -- 全矿区集体刷新模式
     if bAllAtOnce then

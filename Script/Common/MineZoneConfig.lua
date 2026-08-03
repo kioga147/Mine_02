@@ -36,11 +36,6 @@ local ZONES = {
         OreDist = {
             { OreKey = "Stone",   Count = 9,  RespawnSec = 0 },
         },
-        SpecialDrop = {
-            OreKey = "JadeOre",
-            Chance = 0.01,
-            Count = 1,
-        },
     },
     [2] = {
         Name = "煤矿场",
@@ -242,14 +237,6 @@ function MineZoneConfig.GenerateSpawnPositions(ZoneId)
     end
 
     return positions
-end
-
-function MineZoneConfig.GetSpecialDrop(ZoneId)
-    local zone = MineZoneConfig.GetZone(ZoneId)
-    if zone == nil or zone.SpecialDrop == nil then
-        return nil
-    end
-    return zone.SpecialDrop
 end
 
 function MineZoneConfig.IsUseGrid(ZoneId)

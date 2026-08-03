@@ -100,13 +100,15 @@ end
 function Coal:BPDie(KillingDamage, EventInstigator,DamageCauser,DamageEvent,DamageTypeID)
     self.ShakeAmplitude = 0
     self.ShakeSpeed = 0
-    if MineZoneManager and UGCGameSystem.IsServer() then
-        local zoneId, oreKey = MineZoneManager.GetZoneIdByActor(self)
-        if zoneId and oreKey then
-            MineZoneManager.OnOreDestroyed(zoneId, oreKey, self)
+    if UGCGameSystem.IsServer() then
+        if MineZoneManager then
+            local zoneId, oreKey = MineZoneManager.GetZoneIdByActor(self)
+            if zoneId and oreKey then
+                MineZoneManager.OnOreDestroyed(zoneId, oreKey, self, EventInstigator)
+            end
         end
+        self.UGCPresetCommonDropItemComponent:StartDrop(self, EventInstigator, {})
     end
-    self.UGCPresetCommonDropItemComponent:StartDrop(self, EventInstigator, {})
 end
 
 

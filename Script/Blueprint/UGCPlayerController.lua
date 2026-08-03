@@ -304,7 +304,7 @@ do
             PlantUnlockCost = 10000,
             PlantUpgradeCost = 10000,
             MaxBatchCount = 50,
-            DurationSec = 600,
+            DurationSec = 60,
             SkipOasisCost = 50,
             CoalItemId = 8310003,
             GoldItemId = 8310002,
@@ -1722,6 +1722,17 @@ local function GetOasisTicket()
     return 0
 end
 
+local function FormatSmeltOasisR(Cost)
+    local N = math.floor(tonumber(Cost) or 0)
+    if N <= 0 then
+        return "0r"
+    end
+    if N % 10 == 0 then
+        return tostring(math.floor(N / 10)) .. "r"
+    end
+    return tostring(N) .. "绿洲币"
+end
+
 local function EnsureSmeltSessions(PC)
     if PC.SmeltSessions == nil then
         PC.SmeltSessions = {}
@@ -1744,16 +1755,30 @@ local function GetSmeltSlot(PC, Slot)
     return S
 end
 
-local function RefreshSmeltSlotState(SlotData)
+local function RefreshSmeltSlotState(SlotData, NowOverride)
     if SlotData == nil then
         return
     end
     if SlotData.State == SMELT_STATE_RUNNING then
         local EndTime = tonumber(SlotData.EndTime) or 0
-        if EndTime > 0 and NowSec() >= EndTime then
+        local CurTime = tonumber(NowOverride) or NowSec()
+        if EndTime > 0 and CurTime >= EndTime then
             SlotData.State = SMELT_STATE_READY
         end
     end
+end
+
+local function EstimateSmeltServerNow(PC)
+    if UGCGameSystem.IsServer() then
+        return NowSec()
+    end
+    local ServerBase = tonumber(PC and PC.SmeltServerNow) or 0
+    local LocalBase = tonumber(PC and PC.SmeltLocalSyncSec) or 0
+    if ServerBase > 0 and LocalBase > 0 then
+        local Elapsed = math.max(0, LocalClockSec() - LocalBase)
+        return ServerBase + Elapsed
+    end
+    return nil
 end
 
 local function IsSmelterUnlocked(PC)
@@ -1762,7 +1787,8 @@ end
 
 local function SyncSmeltSlotToClient(PC, Slot)
     local Data = GetSmeltSlot(PC, Slot)
-    RefreshSmeltSlotState(Data)
+    local ServerNow = NowSec()
+    RefreshSmeltSlotState(Data, ServerNow)
     UnrealNetwork.CallUnrealRPC(
         PC, PC, "Client_SmeltSlotSync",
         Slot,
@@ -1770,7 +1796,8 @@ local function SyncSmeltSlotToClient(PC, Slot)
         Data.InputId or 0,
         Data.Count or 0,
         Data.EndTime or 0,
-        Data.OutputId or 0
+        Data.OutputId or 0,
+        ServerNow
     )
 end
 
@@ -2001,10 +2028,15 @@ function UGCPlayerController:Client_FurnaceCount(Count)
     end
 end
 
-function UGCPlayerController:Client_SmeltSlotSync(Slot, State, InputId, Count, EndTime, OutputId)
+function UGCPlayerController:Client_SmeltSlotSync(Slot, State, InputId, Count, EndTime, OutputId, ServerNow)
     Slot = math.floor(tonumber(Slot) or 0)
     if Slot < 1 or Slot > 5 then
         return
+    end
+    ServerNow = tonumber(ServerNow) or 0
+    if ServerNow > 0 then
+        self.SmeltServerNow = ServerNow
+        self.SmeltLocalSyncSec = LocalClockSec()
     end
     if self.ClientSmeltSlots == nil then
         self.ClientSmeltSlots = {}
@@ -2026,14 +2058,18 @@ function UGCPlayerController:GetSmeltingStatus()
     local FurnaceCount = math.floor(tonumber(self.UnlockedFurnaceCount) or 0)
     local Slots = {}
     local Source = self.ClientSmeltSlots
-    if UGCGameSystem.IsServer() then
+    local bServer = UGCGameSystem.IsServer()
+    local StatusNow = EstimateSmeltServerNow(self)
+    if bServer then
         EnsureSmeltSessions(self)
         Source = self.SmeltSessions
     end
     for Slot = 1, 5 do
         local Data = Source and Source[Slot] or nil
         if Data then
-            RefreshSmeltSlotState(Data)
+            if bServer or StatusNow ~= nil then
+                RefreshSmeltSlotState(Data, StatusNow)
+            end
             Slots[Slot] = {
                 State = Data.State or SMELT_STATE_IDLE,
                 InputId = Data.InputId or 0,
@@ -2063,6 +2099,7 @@ function UGCPlayerController:GetSmeltingStatus()
         SkipOasisCost = SmeltingConfig.SkipOasisCost,
         MaxBatch = SmeltingConfig.MaxBatchCount,
         DurationSec = SmeltingConfig.DurationSec,
+        ServerNow = StatusNow or 0,
         Slots = Slots,
         LastMsg = self.SmeltLastMsg or "",
     }
@@ -2152,14 +2189,14 @@ function UGCPlayerController:Server_UnlockFurnace(Slot, PayType)
         if GoldCost == nil then
             UnrealNetwork.CallUnrealRPC(
                 self, self, "Client_SmeltNotify",
-                "第5座冶炼炉仅可用 100 绿洲币解锁"
+                "第5座冶炼炉仅可用 " .. FormatSmeltOasisR(Cost.Oasis or 100) .. " 解锁"
             )
             return
         end
         if not TryRemoveGold(self, GoldCost) then
             UnrealNetwork.CallUnrealRPC(
                 self, self, "Client_SmeltNotify",
-                "金币不足，需要 " .. tostring(GoldCost) .. "（也可用 100 绿洲币）"
+                "金币不足，需要 " .. tostring(GoldCost) .. "（也可用 " .. FormatSmeltOasisR(Cost.Oasis or 100) .. "）"
             )
             return
         end
@@ -2192,14 +2229,14 @@ function UGCPlayerController:_ConsumeOasisOrReject(Cost, Reason)
     if HasAPI and Ticket < Cost then
         UnrealNetwork.CallUnrealRPC(
             self, self, "Client_SmeltNotify",
-            "绿洲币不足，" .. Reason .. "需要 " .. tostring(Cost) .. "（当前 " .. tostring(Ticket) .. "）"
+            "绿洲币不足，" .. Reason .. "需要 " .. FormatSmeltOasisR(Cost) .. "（当前 " .. tostring(Ticket) .. "绿洲币）"
         )
         return false
     end
     if not SmeltingConfig.AllowSoftOasisSpend then
         UnrealNetwork.CallUnrealRPC(
             self, self, "Client_SmeltNotify",
-            "请在 SmeltingConfig.OasisProductIds 配置绿洲币商品后购买（" .. Reason .. " " .. tostring(Cost) .. "）"
+            "请在 SmeltingConfig.OasisProductIds 配置绿洲币商品后购买（" .. Reason .. " " .. FormatSmeltOasisR(Cost) .. "）"
         )
         return false
     end
@@ -2329,6 +2366,7 @@ function UGCPlayerController:Server_CollectSmelt(Slot)
     local SlotData = GetSmeltSlot(self, Slot)
     RefreshSmeltSlotState(SlotData)
     if SlotData.State == SMELT_STATE_RUNNING then
+        SyncSmeltSlotToClient(self, Slot)
         UnrealNetwork.CallUnrealRPC(self, self, "Client_SmeltNotify", "精炼尚未完成")
         return
     end

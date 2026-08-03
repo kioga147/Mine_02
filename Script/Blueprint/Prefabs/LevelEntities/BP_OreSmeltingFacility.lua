@@ -18,7 +18,7 @@ do
             PlantUnlockCost = 10000,
             PlantUpgradeCost = 10000,
             MaxBatchCount = 50,
-            DurationSec = 600,
+            DurationSec = 60,
             SkipOasisCost = 50,
             CoalItemId = 8310003,
             RecipeOrder = { 8310004, 8310005, 8310007, 8310008, 8310009, 8310010 },
@@ -102,10 +102,9 @@ local BP_OreSmeltingFacility = {
     SelectedFurnace = 1,
     SelectedOreId = 8310004,
     SelectedCount = 1,
-    --- cycle: 1=炉 2=矿 3=数量 4=支付方式(解锁炉)
-    FocusMode = 1,
     --- 0=金币 1=绿洲币
     PayType = 0,
+    LastFurnaceCount = 0,
     RefreshTimer = nil,
 }
 
@@ -201,12 +200,128 @@ local function SetText(Widget, Text)
     end
 end
 
+local function SetVisible(Widget, bShow)
+    if Widget == nil or Widget.SetVisibility == nil then
+        return
+    end
+    local Vis
+    if bShow then
+        Vis = (ESlateVisibility and ESlateVisibility.Visible) or 0
+    else
+        Vis = (ESlateVisibility and ESlateVisibility.Collapsed) or 1
+    end
+    pcall(function()
+        Widget:SetVisibility(Vis)
+    end)
+end
+
+local function SetEnabled(Widget, bEnabled)
+    if Widget == nil or Widget.SetIsEnabled == nil then
+        return
+    end
+    pcall(function()
+        Widget:SetIsEnabled(bEnabled == true)
+    end)
+end
+
+local function FormatOasisR(Cost)
+    local N = math.floor(tonumber(Cost) or 0)
+    if N <= 0 then
+        return "0r"
+    end
+    if N % 10 == 0 then
+        return tostring(math.floor(N / 10)) .. "r"
+    end
+    return tostring(N) .. "绿洲"
+end
+
+local function IsPaymentSwitchAvailable(Status)
+    Status = Status or {}
+    if Status.bUnlocked ~= true then
+        return false
+    end
+    local FurnaceCount = math.floor(tonumber(Status.FurnaceCount) or 0)
+    if FurnaceCount >= 5 then
+        return false
+    end
+    return SmeltingConfig.GetFurnaceCost(FurnaceCount + 1) ~= nil
+end
+
+local function FitPromptText(Widget)
+    if Widget == nil then
+        return
+    end
+    if Widget.SetAutoWrapText then
+        pcall(function()
+            Widget:SetAutoWrapText(true)
+        end)
+    end
+    if Widget.SetWrapTextAt then
+        pcall(function()
+            Widget:SetWrapTextAt(1160)
+        end)
+    end
+    if Widget.SetClipping then
+        pcall(function()
+            Widget:SetClipping(1)
+        end)
+    end
+    if Widget.SetRenderScale then
+        pcall(function()
+            Widget:SetRenderScale({ X = 0.82, Y = 0.82 })
+        end)
+    end
+end
+
+local function FormatCompactNumber(Value)
+    local N = math.floor(tonumber(Value) or 0)
+    local AbsN = math.abs(N)
+    if AbsN >= 100000000 then
+        return string.format("%.1f亿", N / 100000000)
+    end
+    if AbsN >= 10000 then
+        return string.format("%.1f万", N / 10000)
+    end
+    return tostring(N)
+end
+
+local function ShortSmeltMessage(Msg)
+    Msg = tostring(Msg or "")
+    if Msg == "" then
+        return ""
+    end
+    if string.find(Msg, "绿洲币不足", 1, true) then
+        local Need, Current = string.match(Msg, "需要%s*(%d+).-[（(]当前%s*(%d+)")
+        if Need ~= nil and Current ~= nil then
+            return "绿洲不足：需" .. tostring(Need) .. "，现" .. tostring(Current)
+        end
+        return "绿洲币不足"
+    end
+    if string.find(Msg, "煤矿不足", 1, true) then
+        return "煤矿不足：每个粗矿需要1煤"
+    end
+    if string.find(Msg, "粗矿数量不足", 1, true) then
+        return "粗矿数量不足"
+    end
+    if string.find(Msg, "开始精炼", 1, true) then
+        return ""
+    end
+    if string.find(Msg, "已跳过等待", 1, true) then
+        return "已跳过，可收取产物"
+    end
+    return Msg
+end
+
 local function NowSec()
     return tonumber(os.time()) or 0
 end
 
-local function FormatRemain(EndTime)
-    local Remain = math.floor((tonumber(EndTime) or 0) - NowSec())
+local function FormatRemain(EndTime, ServerNow)
+    local CurTime = tonumber(ServerNow) or 0
+    if CurTime <= 0 then
+        CurTime = NowSec()
+    end
+    local Remain = math.floor((tonumber(EndTime) or 0) - CurTime)
     if Remain < 0 then
         Remain = 0
     end
@@ -223,8 +338,8 @@ function BP_OreSmeltingFacility:ReceiveBeginPlay()
     self.SelectedFurnace = 1
     self.SelectedOreId = SmeltingConfig.FirstRecipeId(1)
     self.SelectedCount = 1
-    self.FocusMode = 1
     self.PayType = 0
+    self.LastFurnaceCount = 0
     self:StartRefreshTimer()
 
     local Trigger = GetInteractTrigger(self)
@@ -455,42 +570,46 @@ function BP_OreSmeltingFacility:ApplyLabels(Widget, Status)
     local UnlockTxt
     if not bUnlocked then
         UnlockTxt = string.format("解锁加工厂 (%d)", Status.UnlockCost or 10000)
-    elseif PlantLevel < 2 then
-        UnlockTxt = string.format("升级工厂 (%d)", Status.UpgradeCost or 10000)
     elseif FurnaceCount < 5 then
         local Next = FurnaceCount + 1
         local Cost = SmeltingConfig.GetFurnaceCost(Next) or { Oasis = 100 }
         if self.PayType == 1 or Cost.Gold == nil then
-            UnlockTxt = string.format("解锁炉%d (绿洲%d)", Next, Cost.Oasis or 100)
+            UnlockTxt = string.format("解锁炉%d (%s)", Next, FormatOasisR(Cost.Oasis or 100))
         else
             UnlockTxt = string.format("解锁炉%d (金%d)", Next, Cost.Gold)
         end
+    elseif PlantLevel < 2 then
+        UnlockTxt = string.format("升级工厂 (%d)", Status.UpgradeCost or 10000)
     else
         UnlockTxt = "炉位已满"
     end
 
     local ActionTxt = "开始精炼"
     if State == SMELT_STATE_RUNNING then
-        ActionTxt = string.format("跳过 (%d绿洲)", Status.SkipOasisCost or 50)
+        ActionTxt = string.format("跳过 (%s)", FormatOasisR(Status.SkipOasisCost or 50))
     elseif State == SMELT_STATE_READY then
         ActionTxt = "收取产物"
     end
 
-    local CycleTxt
-    if self.FocusMode == 1 then
-        CycleTxt = string.format("切炉·当前%d", self.SelectedFurnace)
-    elseif self.FocusMode == 2 then
-        CycleTxt = string.format("切矿·%s", tostring(Recipe.Name))
-    elseif self.FocusMode == 3 then
-        CycleTxt = string.format("切量·x%d", self.SelectedCount)
+    local EnterTxt
+    if bUnlocked and FurnaceCount > 1 then
+        EnterTxt = string.format("切炉·当前%d/%d", self.SelectedFurnace, FurnaceCount)
+    elseif bUnlocked and PlantLevel < 2 then
+        EnterTxt = string.format("升级工厂 (%d)", Status.UpgradeCost or 10000)
     else
-        CycleTxt = (self.PayType == 1) and "支付·绿洲币" or "支付·金币"
+        EnterTxt = string.format("切量·x%d", self.SelectedCount)
+    end
+    local CycleTxt = string.format("切矿·%s", tostring(Recipe.Name))
+    local CloseTxt = "关闭"
+    if IsPaymentSwitchAvailable(Status) then
+        CloseTxt = (self.PayType == 1) and "切支付·绿洲币" or "切支付·金币"
     end
 
+    SetText(GetW(Widget, "Txt_Enter"), EnterTxt)
     SetText(GetW(Widget, "Txt_Unlock"), UnlockTxt)
     SetText(GetW(Widget, "Txt_Quick"), ActionTxt)
     SetText(GetW(Widget, "Txt_Manual"), CycleTxt)
-    SetText(GetW(Widget, "Txt_Close"), "关闭")
+    SetText(GetW(Widget, "Txt_Close"), CloseTxt)
 end
 
 function BP_OreSmeltingFacility:RefreshPromptUI()
@@ -509,21 +628,66 @@ function BP_OreSmeltingFacility:RefreshPromptUI()
             Widget:RefreshShopState(Status)
         end)
     end
-    self:ApplyLabels(Widget, Status)
+
+    SetVisible(GetW(Widget, "Btn_Enter"), bUnlocked)
+    SetVisible(GetW(Widget, "Gap_Prompt"), bUnlocked)
+    SetVisible(GetW(Widget, "Btn_Unlock"), true)
+    SetVisible(GetW(Widget, "Gap_Unlock"), true)
+    SetVisible(GetW(Widget, "Btn_Quick"), bUnlocked)
+    SetVisible(GetW(Widget, "Gap_Quick"), bUnlocked)
+    SetVisible(GetW(Widget, "Btn_Manual"), bUnlocked)
+    SetVisible(GetW(Widget, "Gap_Manual"), bUnlocked)
+    SetVisible(GetW(Widget, "Btn_Close"), true)
+    SetVisible(GetW(Widget, "Gap_Close"), true)
 
     local PlantLevel = math.floor(tonumber(Status.PlantLevel) or 1)
     local FurnaceCount = math.floor(tonumber(Status.FurnaceCount) or 0)
-    local Recipe = SmeltingConfig.GetRecipe(self.SelectedOreId) or { Name = "?" }
+    local LastFurnaceCount = math.floor(tonumber(self.LastFurnaceCount) or 0)
+    if FurnaceCount > LastFurnaceCount then
+        self.SelectedFurnace = FurnaceCount
+    end
+    self.LastFurnaceCount = FurnaceCount
     local Slot = (Status.Slots and Status.Slots[self.SelectedFurnace]) or {}
     local State = math.floor(tonumber(Slot.State) or 0)
+    local bCanMeta = false
+    if not bUnlocked then
+        bCanMeta = (tonumber(Status.GoldCount) or 0) >= (tonumber(Status.UnlockCost) or 10000)
+    elseif FurnaceCount < 5 then
+        local NextCost = SmeltingConfig.GetFurnaceCost(FurnaceCount + 1)
+        if NextCost ~= nil then
+            if self.PayType == 1 or NextCost.Gold == nil then
+                bCanMeta = true
+            else
+                bCanMeta = (tonumber(Status.GoldCount) or 0) >= (tonumber(NextCost.Gold) or 0)
+            end
+        end
+    elseif PlantLevel < 2 then
+        bCanMeta = (tonumber(Status.GoldCount) or 0) >= (tonumber(Status.UpgradeCost) or 10000)
+    end
+    local bCanEnter = bUnlocked
+    if bUnlocked and FurnaceCount > 1 then
+        bCanEnter = true
+    elseif bUnlocked and PlantLevel < 2 then
+        bCanEnter = (tonumber(Status.GoldCount) or 0) >= (tonumber(Status.UpgradeCost) or 10000)
+    end
+    SetEnabled(GetW(Widget, "Btn_Enter"), bCanEnter)
+    SetEnabled(GetW(Widget, "Btn_Unlock"), bCanMeta)
+    SetEnabled(GetW(Widget, "Btn_Quick"), bUnlocked and FurnaceCount >= 1 and (State == SMELT_STATE_IDLE or State == SMELT_STATE_RUNNING or State == SMELT_STATE_READY))
+    SetEnabled(GetW(Widget, "Btn_Manual"), bUnlocked)
+    SetEnabled(GetW(Widget, "Btn_Close"), true)
+
+    self:ApplyLabels(Widget, Status)
+
+    local Recipe = SmeltingConfig.GetRecipe(self.SelectedOreId) or { Name = "?" }
     local StateTxt = "空闲"
     if State == SMELT_STATE_RUNNING then
-        StateTxt = "精炼中 " .. FormatRemain(Slot.EndTime)
+        StateTxt = "精炼中 " .. FormatRemain(Slot.EndTime, Status.ServerNow)
     elseif State == SMELT_STATE_READY then
         StateTxt = "可收取"
     end
 
     local Line
+    local ExtraNotes = {}
     if not bUnlocked then
         Line = string.format(
             "矿石加工厂 · 解锁 %d 金币（当前 %d）",
@@ -532,25 +696,33 @@ function BP_OreSmeltingFacility:RefreshPromptUI()
         )
     else
         Line = string.format(
-            "加工厂 Lv%d · 炉%d/%d[%s] · %s x%d · 煤%d · 金%d · 绿洲%d",
+            "加工厂Lv%d · 炉%d/%d · %s\n%s x%d · 煤%s · 金%s · 绿洲%s",
             PlantLevel,
             self.SelectedFurnace,
             math.max(FurnaceCount, 1),
             StateTxt,
             tostring(Recipe.Name),
             self.SelectedCount,
-            Status.CoalCount or 0,
-            Status.GoldCount or 0,
-            Status.OasisTicket or 0
+            FormatCompactNumber(Status.CoalCount),
+            FormatCompactNumber(Status.GoldCount),
+            FormatCompactNumber(Status.OasisTicket)
         )
         if PlantLevel < 2 then
-            Line = Line .. " · 一级仅可炼二级矿"
+            ExtraNotes[#ExtraNotes + 1] = "一级工厂仅可精炼二级粗矿"
         end
     end
     if Status.LastMsg and Status.LastMsg ~= "" then
-        Line = Line .. "\n" .. tostring(Status.LastMsg)
+        local ShortMsg = ShortSmeltMessage(Status.LastMsg)
+        if ShortMsg ~= "" then
+            ExtraNotes[#ExtraNotes + 1] = ShortMsg
+        end
     end
-    SetText(GetW(Widget, "Txt_Prompt"), Line)
+    if #ExtraNotes > 0 then
+        Line = Line .. "\n" .. table.concat(ExtraNotes, " | ")
+    end
+    local PromptText = GetW(Widget, "Txt_Prompt")
+    FitPromptText(PromptText)
+    SetText(PromptText, Line)
 end
 
 function BP_OreSmeltingFacility:ShowPrompt()
@@ -604,6 +776,9 @@ function BP_OreSmeltingFacility:ShowPrompt()
                 OnUnlock = function()
                     Facility:OnMetaClicked()
                 end,
+                OnEnter = function()
+                    Facility:OnFurnaceUpgradeOrCountClicked()
+                end,
                 OnQuick = function()
                     Facility:OnActionClicked()
                 end,
@@ -611,7 +786,7 @@ function BP_OreSmeltingFacility:ShowPrompt()
                     Facility:OnCycleClicked()
                 end,
                 OnClose = function()
-                    Facility:OnCloseClicked()
+                    Facility:OnCloseOrPaymentClicked()
                 end,
             })
         end
@@ -645,6 +820,16 @@ function BP_OreSmeltingFacility:OnCloseClicked()
     self:HidePrompt()
 end
 
+function BP_OreSmeltingFacility:OnCloseOrPaymentClicked()
+    local Status = self:GetStatus()
+    if IsPaymentSwitchAvailable(Status) then
+        self.PayType = (self.PayType == 0) and 1 or 0
+        self:RefreshPromptUI()
+        return
+    end
+    self:OnCloseClicked()
+end
+
 function BP_OreSmeltingFacility:OnMetaClicked()
     if not self.bLocalPlayerInside then
         return
@@ -663,16 +848,15 @@ function BP_OreSmeltingFacility:OnMetaClicked()
         return
     end
     local PlantLevel = math.floor(tonumber(Status.PlantLevel) or 1)
-    if PlantLevel < 2 then
-        if PC.RequestUpgradeSmeltingPlant then
-            PC:RequestUpgradeSmeltingPlant()
-        else
-            UnrealNetwork.CallUnrealRPC(PC, PC, "Server_UpgradeSmeltingPlant")
-        end
-        return
-    end
     local FurnaceCount = math.floor(tonumber(Status.FurnaceCount) or 0)
     if FurnaceCount >= 5 then
+        if PlantLevel < 2 then
+            if PC.RequestUpgradeSmeltingPlant then
+                PC:RequestUpgradeSmeltingPlant()
+            else
+                UnrealNetwork.CallUnrealRPC(PC, PC, "Server_UpgradeSmeltingPlant")
+            end
+        end
         return
     end
     local Next = FurnaceCount + 1
@@ -736,35 +920,68 @@ function BP_OreSmeltingFacility:OnCycleClicked()
         return
     end
     local PlantLevel = math.floor(tonumber(Status.PlantLevel) or 1)
-    local FurnaceCount = math.max(math.floor(tonumber(Status.FurnaceCount) or 1), 1)
+    self.SelectedOreId = SmeltingConfig.NextRecipeId(self.SelectedOreId, PlantLevel)
+    self:RefreshPromptUI()
+end
 
-    -- 线性轮换：炉 → 矿 → 量 → 支付，每项内部先滚完再进下一项
-    if self.FocusMode == 1 then
-        self.SelectedFurnace = self.SelectedFurnace + 1
-        if self.SelectedFurnace > FurnaceCount then
-            self.SelectedFurnace = 1
-            self.FocusMode = 2
-        end
-    elseif self.FocusMode == 2 then
-        local Old = self.SelectedOreId
-        local First = SmeltingConfig.FirstRecipeId(PlantLevel)
-        self.SelectedOreId = SmeltingConfig.NextRecipeId(Old, PlantLevel)
-        if self.SelectedOreId == First then
-            self.FocusMode = 3
-        end
-    elseif self.FocusMode == 3 then
-        local Old = self.SelectedCount
-        self.SelectedCount = SmeltingConfig.NextCount(Old)
-        if self.SelectedCount == 1 or self.SelectedCount <= Old then
-            self.FocusMode = 4
-        end
-    else
-        self.PayType = (self.PayType == 0) and 1 or 0
-        if self.PayType == 0 then
-            self.FocusMode = 1
-        end
+function BP_OreSmeltingFacility:OnCountClicked()
+    if not self.bLocalPlayerInside then
+        return
+    end
+    local Status = self:GetStatus()
+    if not Status.bUnlocked then
+        return
+    end
+    self.SelectedCount = SmeltingConfig.NextCount(self.SelectedCount)
+    self:RefreshPromptUI()
+end
+
+function BP_OreSmeltingFacility:OnFurnaceClicked()
+    if not self.bLocalPlayerInside then
+        return
+    end
+    local Status = self:GetStatus()
+    if not Status.bUnlocked then
+        return
+    end
+    local FurnaceCount = math.floor(tonumber(Status.FurnaceCount) or 0)
+    if FurnaceCount <= 1 then
+        return
+    end
+    self.SelectedFurnace = math.floor(tonumber(self.SelectedFurnace) or 1) + 1
+    if self.SelectedFurnace > FurnaceCount then
+        self.SelectedFurnace = 1
     end
     self:RefreshPromptUI()
+end
+
+function BP_OreSmeltingFacility:OnFurnaceUpgradeOrCountClicked()
+    if not self.bLocalPlayerInside then
+        return
+    end
+    local Status = self:GetStatus()
+    if not Status.bUnlocked then
+        return
+    end
+    local FurnaceCount = math.floor(tonumber(Status.FurnaceCount) or 0)
+    if FurnaceCount > 1 then
+        self:OnFurnaceClicked()
+        return
+    end
+    local PlantLevel = math.floor(tonumber(Status.PlantLevel) or 1)
+    if PlantLevel < 2 then
+        local PC = GetLocalPC()
+        if PC == nil then
+            return
+        end
+        if PC.RequestUpgradeSmeltingPlant then
+            PC:RequestUpgradeSmeltingPlant()
+        else
+            UnrealNetwork.CallUnrealRPC(PC, PC, "Server_UpgradeSmeltingPlant")
+        end
+        return
+    end
+    self:OnCountClicked()
 end
 
 return BP_OreSmeltingFacility

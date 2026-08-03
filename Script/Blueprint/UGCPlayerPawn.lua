@@ -3,18 +3,9 @@
 local UGCPlayerPawn = {}
 
 local NORMAL_SPEED_SCALE = 2.0
-local SPRINT_SPEED_SCALE = 3.0
 local MINE_CAR_SPEED_SCALE = 4.0
 local MIN_SPEED_SCALE = 0.5
 local MAX_WEIGHT_CAPACITY = 100
-
-local SPRINT_INPUT_ACTION = "UGCReservedAction_01"
-local SPRINT_INPUT_TAGS = {
-    SPRINT_INPUT_ACTION,
-    "Input.Action." .. SPRINT_INPUT_ACTION,
-}
-local SPRINT_TOGGLE_DEBOUNCE = 0.25
-local SPRINT_KEY_NAMES = { "LeftShift", "RightShift" }
 
 local AXE_LEVEL_BY_CLASS = {
     ["copper_pickaxe"] = 1,
@@ -77,138 +68,11 @@ local function UpdateMoveSpeed(Pawn)
         end
     else
         local targetSpeed = CalculateWeightSpeed(Pawn)
-        if Pawn.bSprintToggleEnabled == true then
-            targetSpeed = math.min(SPRINT_SPEED_SCALE, targetSpeed * 1.5)
-        end
         targetSpeed = math.max(targetSpeed, MIN_SPEED_SCALE)
         local curSpeed = UGCAttributeSystem.GetGameAttributeValue(Pawn, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale) or 0
         if curSpeed < MIN_SPEED_SCALE or curSpeed > NORMAL_SPEED_SCALE * 1.5 or math.abs(curSpeed - targetSpeed) > 0.01 then
             UGCAttributeSystem.SetGameAttributeValue(Pawn, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, targetSpeed)
         end
-    end
-end
-
-local function ClearSprintMovementRuntime(Pawn)
-    if not Pawn then
-        return
-    end
-    if UGCAttributeSystem then
-        local AdditiveAttr = UGCNativeGameAttributeType and UGCNativeGameAttributeType.Character_AdditiveSpeedValueWrapper
-            or "AdditiveSpeedValueWrapper"
-        if AdditiveAttr ~= nil then
-            pcall(UGCAttributeSystem.SetGameAttributeValue, Pawn, AdditiveAttr, 0)
-        end
-    end
-    if Pawn.ConsumeMovementInputVector then
-        pcall(Pawn.ConsumeMovementInputVector, Pawn)
-    end
-    local MC = Pawn.CharacterMovement
-    if MC then
-        if MC.ConsumeInputVector then
-            pcall(MC.ConsumeInputVector, MC)
-        end
-        pcall(function()
-            MC.Acceleration = { X = 0, Y = 0, Z = 0 }
-            MC.Velocity = { X = 0, Y = 0, Z = 0 }
-        end)
-    end
-end
-
-local function GetLocalPC()
-    if UGCGameSystem and UGCGameSystem.GetLocalPlayerController then
-        local Ok, PC = pcall(UGCGameSystem.GetLocalPlayerController)
-        if Ok then
-            return PC
-        end
-    end
-    return nil
-end
-
-local function WasKeyJustPressed(PC, KeyName)
-    if PC == nil then
-        return false
-    end
-
-    local OkDirect, DirectPressed = pcall(function()
-        return PC:WasInputKeyJustPressed(KeyName)
-    end)
-    if OkDirect and DirectPressed == true then
-        return true
-    end
-
-    local InputLib = rawget(_G, "UKismetInputLibrary")
-    if InputLib ~= nil and InputLib.GetKeyByName ~= nil then
-        local OkKey, Key = pcall(InputLib.GetKeyByName, KeyName)
-        if OkKey and Key ~= nil then
-            local OkPressed, Pressed = pcall(function()
-                return PC:WasInputKeyJustPressed(Key)
-            end)
-            if OkPressed and Pressed == true then
-                return true
-            end
-        end
-    end
-
-    return false
-end
-
-local function PollSprintToggleKey(Pawn)
-    if not Pawn then
-        return
-    end
-    if UGCGameSystem and UGCGameSystem.IsServer and UGCGameSystem.IsServer() then
-        return
-    end
-
-    local LocalPawn = UGCGameSystem and UGCGameSystem.GetLocalPlayerPawn and UGCGameSystem.GetLocalPlayerPawn()
-    if LocalPawn ~= Pawn then
-        return
-    end
-
-    local PC = GetLocalPC()
-    for _, KeyName in ipairs(SPRINT_KEY_NAMES) do
-        if WasKeyJustPressed(PC, KeyName) then
-            Pawn._sprintToggleRequested = true
-            ugcprint("[SprintToggle] fallback key pressed:", KeyName)
-            return
-        end
-    end
-end
-
-local function GetInputValueSafe(Pawn, InputName)
-    local InputSystem = rawget(_G, "UGCInputSystem")
-    if Pawn == nil or InputSystem == nil or InputSystem.GetInputValue == nil then
-        return 0
-    end
-    local Ok, Value = pcall(InputSystem.GetInputValue, Pawn, InputName)
-    if Ok then
-        return tonumber(Value) or 0
-    end
-    return 0
-end
-
-local function IsLiveMoveInputActive(Pawn)
-    local Forward = GetInputValueSafe(Pawn, "MoveForwardWin")
-    local Right = GetInputValueSafe(Pawn, "MoveRightWin")
-    return math.abs(Forward) > 0.05 or math.abs(Right) > 0.05
-end
-
-local function DisableDefaultSprintInput(Pawn)
-    local ControllerSystem = rawget(_G, "UGCPlayerControllerSystem")
-    if ControllerSystem == nil or ControllerSystem.DisableJoyStickSprint == nil then
-        return
-    end
-
-    local PC = GetLocalPC()
-    if PC == nil and UGCGameSystem and UGCGameSystem.GetPlayerControllerByPlayerPawn then
-        local Ok, Result = pcall(UGCGameSystem.GetPlayerControllerByPlayerPawn, Pawn)
-        if Ok then
-            PC = Result
-        end
-    end
-
-    if PC ~= nil then
-        pcall(ControllerSystem.DisableJoyStickSprint, PC)
     end
 end
 
@@ -233,15 +97,8 @@ function UGCPlayerPawn:ReceiveBeginPlay()
     
     self.bIsMineCarMode = false
     self.bWasMineCarMode = false
-    self.bSprintToggleEnabled = false
-    self._sprintToggleRequested = false
-    self._lastSprintToggleTime = 0
     self._mineCarMaxHealth = 0
     self._mineCarHealthDelegate = nil
-    DisableDefaultSprintInput(self)
-    if not UGCGameSystem.IsServer() and self.BindSprintToggleInput then
-        self:BindSprintToggleInput()
-    end
     UpdateMoveSpeed(self)
     UGCAttributeSystem.SetGameAttributeValue(self, "AxeLevel", 0)
     
@@ -449,49 +306,6 @@ function UGCPlayerPawn:UpdateMoveSpeed()
     UpdateMoveSpeed(self)
 end
 
-function UGCPlayerPawn:Server_SetSprintToggle(bEnable)
-    if self.bIsMineCarMode then
-        self.bSprintToggleEnabled = false
-        return
-    end
-    self.bSprintToggleEnabled = bEnable == true
-    if self.bSprintToggleEnabled ~= true then
-        ClearSprintMovementRuntime(self)
-    end
-    UpdateMoveSpeed(self)
-end
-
-function UGCPlayerPawn:Server_ResetMoveSpeedAfterSprint()
-    self:Server_SetSprintToggle(false)
-end
-
-function UGCPlayerPawn:BindSprintToggleInput()
-    local InputSystem = rawget(_G, "UGCInputSystem")
-    local TriggerEnum = rawget(_G, "ETriggerEvent")
-    if InputSystem == nil or InputSystem.BindInputMapping == nil or TriggerEnum == nil then
-        ugcprint("[SprintToggle] input mapping api missing")
-        return
-    end
-
-    self._sprintInputBindingHandles = self._sprintInputBindingHandles or {}
-    for _, TagName in ipairs(SPRINT_INPUT_TAGS) do
-        for _, EventName in ipairs({ "Started", "Triggered" }) do
-            local TriggerEvent = TriggerEnum[EventName]
-            if TriggerEvent ~= nil then
-                local Ok, Handle = pcall(InputSystem.BindInputMapping, self, TagName, TriggerEvent, self.OnSprintToggleInput)
-                if Ok then
-                    table.insert(self._sprintInputBindingHandles, Handle)
-                end
-            end
-        end
-    end
-    ugcprint("[SprintToggle] bound input action:", SPRINT_INPUT_ACTION)
-end
-
-function UGCPlayerPawn:OnSprintToggleInput(InputValue, ElapsedTime, TriggeredTime, InputTag)
-    self._sprintToggleRequested = true
-end
-
 local _lastFrameDeltaTime = 0
 local _stuckInputRecoveryCooldown = 0
 local _diagnosticLogTimer = 0
@@ -500,9 +314,6 @@ local _inputState = {
     lastInputMag = 0,
     wasMoving = false,
     stoppedFrames = 0,
-    noLiveInputMovingFrames = 0,
-    sprintReleaseResetDelay = 0,
-    wasSprintDown = false,
 }
 
 local function RecoverStuckInput(Pawn)
@@ -510,10 +321,6 @@ local function RecoverStuckInput(Pawn)
     
     -- ugcprint("[输入恢复] ========== 开始恢复 ==========")
     
-    if Pawn.ConsumeMovementInputVector then
-        pcall(Pawn.ConsumeMovementInputVector, Pawn)
-    end
-
     local MC = Pawn.CharacterMovement
     if not MC then
         -- ugcprint("[输入恢复] CharacterMovement不存在，跳过")
@@ -555,6 +362,36 @@ local function RecoverStuckInput(Pawn)
         -- ugcprint("[输入恢复] ResetJoystickInput完成")
     else
         -- ugcprint("[输入恢复] Widget无ResetJoystickInput方法")
+    end
+    
+    if Widget.Left then
+        local Left = Widget.Left
+        -- ugcprint(string.format("[输入恢复] Left摇杆存在: %s, bIsPressed=%s", 
+        --     tostring(Left), tostring(Left.bIsPressed)))
+        
+        if Left.ClearTouchInput then
+            -- ugcprint("[输入恢复] 调用Left:ClearTouchInput...")
+            pcall(Left.ClearTouchInput, Left)
+            -- ugcprint(string.format("[输入恢复] ClearTouchInput: ok=%s", tostring(OkCTI)))
+        else
+            -- ugcprint("[输入恢复] Left无ClearTouchInput方法")
+        end
+        
+        if Left.ReleaseAllPointerCapture then
+            -- ugcprint("[输入恢复] 调用Left:ReleaseAllPointerCapture...")
+            pcall(Left.ReleaseAllPointerCapture, Left)
+            -- ugcprint(string.format("[输入恢复] ReleaseAllPointerCapture: ok=%s", tostring(OkRPC)))
+        else
+            -- ugcprint("[输入恢复] Left无ReleaseAllPointerCapture方法")
+        end
+        
+        pcall(function()
+            Left.bIsPressed = false
+            Left.CurrentVector = nil
+        end)
+        -- ugcprint(string.format("[输入恢复] 已强制清除Left状态: bIsPressed=%s", tostring(Left.bIsPressed)))
+    else
+        -- ugcprint("[输入恢复] Widget.Left不存在")
     end
     
     -- ugcprint("[输入恢复] ========== 恢复完成 ==========")
@@ -606,7 +443,7 @@ local function PrintDiagnosticLog(Pawn, DeltaTime)
     -- local LocalPC = UGCGameSystem and UGCGameSystem.GetLocalPlayerController and UGCGameSystem.GetLocalPlayerController()
     -- local LeftPressed = "N/A"
     -- if LocalPC and LocalPC.RightJoyStickWidget and LocalPC.RightJoyStickWidget.Left then
-    --     LeftPressed = "hidden"
+    --     LeftPressed = tostring(LocalPC.RightJoyStickWidget.Left.bIsPressed)
     -- end
     -- 
     -- ugcprint(string.format("[诊断] DT=%.3f 速度=(%.1f,%.1f,%.1f) 输入=(%.2f,%.2f,%.2f) Mag=%.3f MineCar=%s LeftPressed=%s",
@@ -620,9 +457,6 @@ local function DetectAndRecoverStuckInput(Pawn, DeltaTime)
     local FRAME_DROP_THRESHOLD = 0.15
     local RECOVERY_COOLDOWN = 0.5
     local DIAG_INTERVAL = 0.5
-    local STOP_SPEED_SQ = 2500
-    local STUCK_INPUT_THRESHOLD = 0.15
-    local STUCK_FRAMES = 3
     
     _diagnosticLogTimer = _diagnosticLogTimer + DeltaTime
     if _diagnosticLogTimer >= DIAG_INTERVAL then
@@ -639,8 +473,7 @@ local function DetectAndRecoverStuckInput(Pawn, DeltaTime)
         return
     end
     
-    local bLiveMoveInput = IsLiveMoveInputActive(Pawn)
-    if DeltaTime > FRAME_DROP_THRESHOLD and _lastFrameDeltaTime > FRAME_DROP_THRESHOLD and not bLiveMoveInput then
+    if DeltaTime > FRAME_DROP_THRESHOLD and _lastFrameDeltaTime > FRAME_DROP_THRESHOLD then
         if _stuckInputRecoveryCooldown <= 0 then
             _stuckInputRecoveryCooldown = RECOVERY_COOLDOWN
             -- ugcprint(string.format("[输入恢复] 检测到连续帧跌落: DT=%.3f, LastDT=%.3f", DeltaTime, _lastFrameDeltaTime))
@@ -670,97 +503,10 @@ local function DetectAndRecoverStuckInput(Pawn, DeltaTime)
     _lastFrameDeltaTime = DeltaTime
 end
 
-local function DetectAndRecoverStuckInputStrict(Pawn, DeltaTime)
-    if not Pawn then return end
-
-    local LocalPawn = UGCGameSystem and UGCGameSystem.GetLocalPlayerPawn and UGCGameSystem.GetLocalPlayerPawn()
-    if not LocalPawn or LocalPawn ~= Pawn then
-        return
-    end
-
-    local RECOVERY_COOLDOWN = 0.5
-    local STOP_SPEED_SQ = 2500
-    local STUCK_INPUT_THRESHOLD = 0.15
-    local STUCK_FRAMES = 3
-
-    if _stuckInputRecoveryCooldown > 0 then
-        _stuckInputRecoveryCooldown = _stuckInputRecoveryCooldown - DeltaTime
-    end
-
-    local bLiveMoveInput = IsLiveMoveInputActive(Pawn)
-    local MC = Pawn.CharacterMovement
-    if MC == nil then
-        _lastFrameDeltaTime = DeltaTime
-        return
-    end
-
-    local SpeedSq = 0
-    local OkV, Velocity = pcall(function() return MC.Velocity end)
-    if OkV and Velocity then
-        SpeedSq = (Velocity.X or 0)^2 + (Velocity.Y or 0)^2 + (Velocity.Z or 0)^2
-    end
-
-    local PendingMag = 0
-    local OkPI, InputVec = pcall(MC.GetPendingInputVector, MC)
-    if OkPI and InputVec then
-        PendingMag = math.sqrt((InputVec.X or 0)^2 + (InputVec.Y or 0)^2 + (InputVec.Z or 0)^2)
-    end
-
-    if not bLiveMoveInput and (SpeedSq > STOP_SPEED_SQ or PendingMag > STUCK_INPUT_THRESHOLD) then
-        _inputState.noLiveInputMovingFrames = (_inputState.noLiveInputMovingFrames or 0) + 1
-    else
-        _inputState.noLiveInputMovingFrames = 0
-    end
-
-    if _inputState.noLiveInputMovingFrames >= STUCK_FRAMES and _stuckInputRecoveryCooldown <= 0 then
-        _stuckInputRecoveryCooldown = RECOVERY_COOLDOWN
-        _inputState.noLiveInputMovingFrames = 0
-        RecoverStuckInput(Pawn)
-    end
-
-    _lastFrameDeltaTime = DeltaTime
-end
-
-local function HandleSprintToggleInput(Pawn)
-    if not Pawn or Pawn.bIsMineCarMode then
-        return
-    end
-
-    if Pawn._sprintToggleRequested ~= true then
-        return
-    end
-    Pawn._sprintToggleRequested = false
-
-    local Now = 0
-    if os and os.clock then
-        Now = os.clock()
-    end
-    if Pawn._lastSprintToggleTime and Now > 0 and Now - Pawn._lastSprintToggleTime < SPRINT_TOGGLE_DEBOUNCE then
-        return
-    end
-    Pawn._lastSprintToggleTime = Now
-
-    Pawn.bSprintToggleEnabled = not (Pawn.bSprintToggleEnabled == true)
-    ugcprint("[SprintToggle] toggled:", tostring(Pawn.bSprintToggleEnabled))
-    if Pawn.Server_SetSprintToggle then
-        pcall(Pawn.Server_SetSprintToggle, Pawn, Pawn.bSprintToggleEnabled == true)
-    end
-
-    if Pawn.bSprintToggleEnabled ~= true then
-        ClearSprintMovementRuntime(Pawn)
-        RecoverStuckInput(Pawn)
-        if Pawn.Server_ResetMoveSpeedAfterSprint then
-            pcall(Pawn.Server_ResetMoveSpeedAfterSprint, Pawn)
-        end
-    end
-end
-
 function UGCPlayerPawn:ReceiveTick(DeltaTime)
     UGCPlayerPawn.SuperClass.ReceiveTick(self, DeltaTime)
     
-    DetectAndRecoverStuckInputStrict(self, DeltaTime)
-    PollSprintToggleKey(self)
-    HandleSprintToggleInput(self)
+    DetectAndRecoverStuckInput(self, DeltaTime)
     
     if self.bIsMineCarMode then
         return
@@ -814,7 +560,7 @@ function UGCPlayerPawn:GetReplicatedProperties()
 end
 
 function UGCPlayerPawn:GetAvailableServerRPCs()
-    return "Server_SetMineCarMode", "Server_SetSprintToggle", "Server_ResetMoveSpeedAfterSprint"
+    return "Server_SetMineCarMode"
 end
 
 return UGCPlayerPawn

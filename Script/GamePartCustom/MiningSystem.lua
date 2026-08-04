@@ -30,7 +30,28 @@ MiningSystem.AXE_LEVEL_BY_CLASS = {
     ["exdiamond_pickaxe"] = 5,
     ["exdiamond_drill"] = 5,
     ["advanced_miningtruck"] = 5,
+    ["mineboom"] = 5,
 }
+
+MiningSystem.BombLevel = 5
+MiningSystem.BombExpireTime = 0
+
+function MiningSystem.SetBombActive(bActive)
+    if bActive then
+        MiningSystem.BombExpireTime = os.clock() + 3
+        ugcprint("[MiningSystem] 炸弹已激活，等级="..MiningSystem.BombLevel.."，持续3秒")
+    else
+        MiningSystem.BombExpireTime = 0
+        ugcprint("[MiningSystem] 炸弹已清除")
+    end
+end
+
+function MiningSystem.IsBombActive()
+    if MiningSystem.BombExpireTime > 0 and os.clock() < MiningSystem.BombExpireTime then
+        return true
+    end
+    return false
+end
 
 function MiningSystem.GetAxeLevelByItemID(ItemID)
     return MiningSystem.AXE_LEVEL_MAP[ItemID] or 0
@@ -52,6 +73,10 @@ end
 function MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
     if not DamageCauser then
         return 0
+    end
+    
+    if MiningSystem.IsBombActive() then
+        return MiningSystem.BombLevel
     end
     
     local currentWeapon = nil

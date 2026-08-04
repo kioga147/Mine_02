@@ -194,7 +194,6 @@ function MineZoneManager.RegisterOre(Actor, OreKey)
 
     for _, entry in ipairs(ZONE_ACTORS[zoneId]) do
         if entry.Actor == Actor then
-            ugcprint(string.format("[MineZoneManager] RegisterOre: 矿石已在矿区%d中", zoneId))
             return
         end
     end
@@ -209,9 +208,6 @@ function MineZoneManager.RegisterOre(Actor, OreKey)
         OriginalY = y,
         OriginalZ = z,
     })
-
-    ugcprint(string.format("[MineZoneManager] RegisterOre: ✅ 矿区%d注册 %s at (%.0f,%.0f,%.0f) 总计=%d",
-        zoneId, OreKey, x, y, z, #ZONE_ACTORS[zoneId]))
 
     MineZoneManager._ScheduleSummary()
 end
@@ -271,9 +267,6 @@ function MineZoneManager._ScheduleNoPlayersLoop(ZoneId, ZoneName)
 
         local players = MineZoneManager._CountPlayersInZone(ZoneId)
         if players > 0 then
-            ugcprint(string.format(
-                "[MineZoneManager] 矿区%s仍有%d人，继续等待...",
-                ZoneName, players))
             _PLAYER_CHECK_TIMERS[ZoneId] = nil
             MineZoneManager._ScheduleNoPlayersLoop(ZoneId, ZoneName)
         else
@@ -334,7 +327,6 @@ end
 
 function MineZoneManager.OnOreDestroyed(ZoneId, OreKey, Actor, EventInstigator)
     if not UGCGameSystem.IsServer() then
-        ugcprint("[MineZoneManager] OnOreDestroyed: 客户端调用，忽略")
         return
     end
 
@@ -354,16 +346,12 @@ function MineZoneManager.OnOreDestroyed(ZoneId, OreKey, Actor, EventInstigator)
             if entry.Actor == Actor then
                 spawnInfo = entry
                 table.remove(ZONE_ACTORS[ZoneId], i)
-                ugcprint(string.format("[MineZoneManager] OnOreDestroyed: 找到矿石，矿区%d剩余=%d",
-                    ZoneId, #ZONE_ACTORS[ZoneId]))
                 break
             end
         end
     end
 
     if spawnInfo == nil then
-        ugcprint(string.format("[MineZoneManager] OnOreDestroyed: ⚠️ 未找到矿石 (zoneId=%d, oreKey=%s)",
-            ZoneId, tostring(OreKey)))
         return
     end
 
@@ -374,7 +362,6 @@ function MineZoneManager.OnOreDestroyed(ZoneId, OreKey, Actor, EventInstigator)
     -- 全矿区集体刷新模式
     if bAllAtOnce then
         local remainingCount = MineZoneManager.GetZoneOreCount(ZoneId)
-        ugcprint(string.format("[MineZoneManager] 矿区%d剩余矿石: %d", ZoneId, remainingCount))
 
         if remainingCount == 0 and not _GROUP_RESPAWNING[ZoneId] then
             _GROUP_RESPAWNING[ZoneId] = true

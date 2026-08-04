@@ -24,8 +24,6 @@ local function CheckAutoUpgrade(Player)
     local maxCapacity = UGCBackpackSystemV2.GetMaxCellCapacity(Player)
     local playerCoins = UGCBackpackSystemV2.GetItemCountV2(Player, COIN_ITEM_ID)
     
-    ugcprint("[背包升级] 自动检测 - 当前已解锁容量:", currentCapacity, "上限:", maxCapacity, "金币:", playerCoins)
-    
     for level = 1, 9 do
         local currentConfig = BACKPACK_LEVEL_CONFIG[level]
         local nextConfig = BACKPACK_LEVEL_CONFIG[level + 1]
@@ -152,13 +150,9 @@ local safeItemWeight = tonumber(itemWeight) or 1
         safeItemWeight = 1
     end
     local maxWeightCount = math.floor(remainingWeight / safeItemWeight)
-    ugcprint("[背包负重] 按负重还能承载数量:", maxWeightCount)
-    
     if maxWeightCount < Count then
         ugcprint("[背包负重] ⚠️ 超重警告！负重只影响速度，不限制入背包数量")
     end
-    
-    ugcprint("[背包负重] ===========================")
     return Count
 end
 
@@ -177,13 +171,9 @@ local safeItemWeight = tonumber(itemWeight) or 1
         safeItemWeight = 1
     end
     local maxWeightCount = math.floor(remainingWeight / safeItemWeight)
-    ugcprint("[背包负重] 按负重还能承载数量:", maxWeightCount)
-    
     if maxWeightCount < Count then
         ugcprint("[背包负重] ⚠️ 超重警告！负重只影响速度，不限制入背包数量")
     end
-    
-    ugcprint("[背包负重] =======================================")
     return Count
 end
 

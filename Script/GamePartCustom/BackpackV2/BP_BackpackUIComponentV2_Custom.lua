@@ -2,21 +2,6 @@
 --Edit Below--
 local BP_BackpackUIComponentV2_Custom = {} 
 
-local BACKPACK_LEVEL_CONFIG = {
-    [1] = { Capacity = 10, Cost = 0 },
-    [2] = { Capacity = 15, Cost = 1500 },
-    [3] = { Capacity = 20, Cost = 4000 },
-    [4] = { Capacity = 40, Cost = 10000 },
-    [5] = { Capacity = 60, Cost = 20000 },
-    [6] = { Capacity = 80, Cost = 50000 },
-    [7] = { Capacity = 100, Cost = 100000 },
-    [8] = { Capacity = 140, Cost = 200000 },
-    [9] = { Capacity = 180, Cost = 400000 },
-    [10] = { Capacity = 240, Cost = 1000000 },
-}
-
-local COIN_ITEM_ID = 8310002
-
 local WarehouseConfig = nil
 do
     local Ok, Mod = pcall(function()
@@ -45,30 +30,6 @@ do
     end
 end
 
-local function TryUpgradeBackpack(Player)
-    local currentCapacity = UGCBackpackSystemV2.GetCellCapacity(Player)
-    local playerCoins = UGCBackpackSystemV2.GetItemCountV2(Player, COIN_ITEM_ID)
-
-    ugcprint("[背包升级] 当前已解锁容量:", currentCapacity, "金币:", playerCoins)
-
-    for level = 1, 9 do
-        local currentConfig = BACKPACK_LEVEL_CONFIG[level]
-        local nextConfig = BACKPACK_LEVEL_CONFIG[level + 1]
-
-        if currentCapacity == currentConfig.Capacity then
-            if playerCoins >= nextConfig.Cost then
-                local capacityIncrease = nextConfig.Capacity - currentConfig.Capacity
-                UGCBackpackSystemV2.RemoveItemV2(Player, COIN_ITEM_ID, nextConfig.Cost)
-                UGCBackpackSystemV2.AddCellCapacity(Player, capacityIncrease)
-                ugcprint("[背包升级] 升级成功！等级:", level, "->", level + 1, "容量:", currentConfig.Capacity, "->", nextConfig.Capacity, "消耗金币:", nextConfig.Cost)
-            else
-                ugcprint("[背包升级] 金币不足！需要:", nextConfig.Cost, "当前:", playerCoins)
-            end
-            break
-        end
-    end
-end
-
 --- 点击仓库锁格：走服务端升级（支持金币/绿洲币），此处仅发请求用金币档（UI 无支付切换）
 local function TryRequestWarehouseUpgrade(PlayerController)
     if PlayerController == nil then
@@ -87,6 +48,7 @@ end
 ---@param DataType number @类型 [0:背包数据, 1:仓库数据]
 function BP_BackpackUIComponentV2_Custom:ClickLockBackpackItem(DataType)
     local PlayerController = self:GetOwner()
+    if not PlayerController then return end
     local Player = PlayerController:GetPawn()
     DataType = math.floor(tonumber(DataType) or 0)
 
@@ -104,7 +66,8 @@ function BP_BackpackUIComponentV2_Custom:ClickLockBackpackItem(DataType)
         return
     end
 
-    TryUpgradeBackpack(Player)
+    -- 背包锁格与 Minershop 统一走服务端 Server_UpgradeBackpack
+    UnrealNetwork.CallUnrealRPC(PlayerController, PlayerController, "Server_UpgradeBackpack")
 end
 
 ---开始运行时执行
@@ -121,21 +84,6 @@ end
 ---@param Panel UUserWidget @背包主界面控件
 function BP_BackpackUIComponentV2_Custom:OnOpenBattleMainPanel(Panel)
     BP_BackpackUIComponentV2_Custom.SuperClass.OnOpenBattleMainPanel(self, Panel)
-    
-    local Player = self:GetOwner()
-    local backpackWeightInfo = BP_BackpackComponentV2_Custom.GetBackpackWeightInfo(Player)
-    if backpackWeightInfo then
-        local weightText = string.format("%dkg/%dkg", math.floor(backpackWeightInfo.CurrentWeight), backpackWeightInfo.MaxWeight)
-        
-        if Panel and Panel.SetText then
-            Panel:SetText(weightText)
-        elseif Panel and Panel.GetWidgetFromName then
-            local TextWidget = Panel:GetWidgetFromName("WeightText")
-            if TextWidget and TextWidget.SetText then
-                TextWidget:SetText(weightText)
-            end
-        end
-    end
 end
 
 return BP_BackpackUIComponentV2_Custom

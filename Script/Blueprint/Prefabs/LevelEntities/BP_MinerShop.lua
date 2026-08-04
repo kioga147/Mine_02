@@ -127,15 +127,16 @@ function BP_MinerShop:ShowPrompt()
         })
         local pc = GetLocalPC()
         if pc then
+            pc.OnBackpackLevelSynced = function(Level)
+                F.BpLevelCache = tonumber(Level) or 1
+                F:RefreshUI()
+            end
+            UnrealNetwork.CallUnrealRPC(pc, pc, "Server_QueryBackpackLevel")
             pc.OnShopNotify = function(Msg)
                 if F.bLocalPlayerInside and F.PromptWidget then
-                    -- immediate cache update
-                    if Msg and string.find(Msg, '成功') then
-                        if string.find(Msg, '购买') then
-                            F.OwnedToolCache[F.SelectedToolIndex] = true
-                        elseif string.find(Msg, '背包升级') then
-                            F.BpLevelCache = F.BpLevelCache + 1
-                        end
+                    -- 工具拥有状态可本地缓存；背包等级以 Client_BackpackLevelSync 为准
+                    if Msg and string.find(Msg, '成功') and string.find(Msg, '购买') then
+                        F.OwnedToolCache[F.SelectedToolIndex] = true
                     end
                     F:RefreshUI()
                 end
@@ -153,6 +154,7 @@ function BP_MinerShop:HidePrompt()
     self.bPromptOpening = false
     local pc = GetLocalPC()
     if pc then pc.OnShopNotify = nil end
+    if pc then pc.OnBackpackLevelSynced = nil end
     if self.PromptWidget then
         pcall(function() self.PromptWidget:SetShopCallbacks(nil) end)
         if self.PromptWidget.RemoveFromParent then
@@ -204,10 +206,12 @@ function BP_MinerShop:RefreshUI()
     SetEnabled(GetW(W, 'Btn_Quick'), not owned)
 
     local pc = GetLocalPC()
-    local bpLv = self.BpLevelCache or 1
-    if pc and pc.BackpackLevel and tonumber(pc.BackpackLevel) > bpLv then 
-        bpLv = pc.BackpackLevel
+    local bpLv = 1
+    if pc and pc.BackpackLevel and tonumber(pc.BackpackLevel) > 0 then
+        bpLv = tonumber(pc.BackpackLevel)
         self.BpLevelCache = bpLv
+    elseif self.BpLevelCache then
+        bpLv = tonumber(self.BpLevelCache) or 1
     end
     local maxLv = ShopConfig.GetMaxBackpackLevel()
     local curCfg = ShopConfig.GetBackpackLevel(bpLv)

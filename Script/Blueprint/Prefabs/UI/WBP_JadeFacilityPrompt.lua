@@ -1,17 +1,9 @@
 ---@class WBP_JadeFacilityPrompt_C:UUserWidget
----@field PromptCard UBorder
----@field PromptRoot UVerticalBox
----@field Txt_Prompt UTextBlock
----@field Btn_Enter UButton
----@field Txt_Enter UTextBlock
----@field Btn_Unlock UButton
----@field Txt_Unlock UTextBlock
----@field Btn_Quick UButton
----@field Txt_Quick UTextBlock
----@field Btn_Manual UButton
----@field Txt_Manual UTextBlock
 ---@field Btn_Close UButton
----@field Txt_Close UTextBlock
+---@field Btn_Enter UButton
+---@field Btn_Manual UButton
+---@field Btn_Quick UButton
+---@field Btn_Unlock UButton
 --Edit Below--
 --- 模式选择层：解锁 / 快速鉴定 / 手动鉴定 / 关闭（不直接进 5×5）
 local WBP_JadeFacilityPrompt = {

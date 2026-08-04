@@ -5,7 +5,6 @@ local UGCPlayerPawn = {}
 local NORMAL_SPEED_SCALE = 2.0
 local MINE_CAR_SPEED_SCALE = 4.0
 local MIN_SPEED_SCALE = 0.5
-local MAX_WEIGHT_CAPACITY = 100
 
 local AXE_LEVEL_BY_CLASS = {
     ["copper_pickaxe"] = 1,
@@ -23,33 +22,9 @@ local AXE_LEVEL_BY_CLASS = {
     ["advanced_miningtruck"] = 5,
 }
 
-local BP_BackpackComponentV2_Custom = nil
-local function GetBackpackComponent()
-    if not BP_BackpackComponentV2_Custom then
-        if UGCGameSystem and UGCGameSystem.UGCRequire then
-            local Ok, Mod = pcall(UGCGameSystem.UGCRequire, "Script.GamePartCustom.BackpackV2.BP_BackpackComponentV2_Custom")
-            if Ok and Mod then
-                BP_BackpackComponentV2_Custom = Mod
-            end
-        end
-    end
-    return BP_BackpackComponentV2_Custom
-end
 
-local function CalculateWeightSpeed(Player)
-    if not Player then
-        return NORMAL_SPEED_SCALE
-    end
-    local curWeight = 0
-    if BP_BackpackComponentV2_Custom and BP_BackpackComponentV2_Custom.GetBackpackWeightInfo then
-        local info = BP_BackpackComponentV2_Custom.GetBackpackWeightInfo(Player)
-        if info and info.CurrentWeight then
-            curWeight = info.CurrentWeight
-        end
-    end
-    local ratio = math.min(curWeight / MAX_WEIGHT_CAPACITY, 1.0)
-    local speedScale = NORMAL_SPEED_SCALE * (1.0 - ratio * 0.5)
-    return speedScale
+local function CalculateWeightSpeed()
+    return NORMAL_SPEED_SCALE
 end
 
 local function UpdateMoveSpeed(Pawn)
@@ -67,7 +42,7 @@ local function UpdateMoveSpeed(Pawn)
             UGCAttributeSystem.SetGameAttributeValue(Pawn, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale, MINE_CAR_SPEED_SCALE)
         end
     else
-        local targetSpeed = CalculateWeightSpeed(Pawn)
+        local targetSpeed = CalculateWeightSpeed()
         targetSpeed = math.max(targetSpeed, MIN_SPEED_SCALE)
         local curSpeed = UGCAttributeSystem.GetGameAttributeValue(Pawn, UGCNativeGameAttributeType.Character_UGCGeneralMoveSpeedScale) or 0
         if curSpeed < MIN_SPEED_SCALE or curSpeed > NORMAL_SPEED_SCALE * 1.5 or math.abs(curSpeed - targetSpeed) > 0.01 then

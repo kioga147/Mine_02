@@ -1,5 +1,5 @@
 ---@class UGCPlayerController_C:BP_PlayerController_TopDown_C
----@field ShopV2Component ShopV2Component_C
+---@field TaskTemplateComponent TaskTemplateComponent_C
 --Edit Below--
 local MineTeleportConfig = nil
 do

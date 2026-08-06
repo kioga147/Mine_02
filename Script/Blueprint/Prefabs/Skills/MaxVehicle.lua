@@ -6,26 +6,30 @@ local MaxVehicle = {
     ParticleSystemComponent = nil
 }
 
+local function DestroyParticle(Skill)
+    if Skill and Skill.ParticleSystemComponent then
+        pcall(function()
+            Skill.ParticleSystemComponent:K2_DestroyComponent()
+        end)
+        Skill.ParticleSystemComponent = nil
+    end
+end
+
 function MaxVehicle:OnApply_BP()
     MaxVehicle.SuperClass.OnApply_BP(self)
     if not self:HasAuthority() then
-        local Character = self:GetNetOwnerActor()
-        self.ParticleSystemComponent = GameplayStatics.SpawnEmitterAttachedToActor(self.Particle, Character.Mesh, "root", Vector.New(0,0,10), Rotator.New(0, 0, 0), Vector.New(1, 1, 1), EAttachLocation.SnapToTarget, true)
+        DestroyParticle(self)
     end
 end
 
 function MaxVehicle:OnDisableSkill_BP()
     MaxVehicle.SuperClass.OnDisableSkill_BP(self)
+    DestroyParticle(self)
 end
 
 function MaxVehicle:OnUnApply_BP()
     MaxVehicle.SuperClass.OnUnApply_BP(self)
-    if not self:HasAuthority() then
-        if self.ParticleSystemComponent then
-            self.ParticleSystemComponent:K2_DestroyComponent()
-            self.ParticleSystemComponent = nil
-        end
-    end
+    DestroyParticle(self)
 end
 
 function MaxVehicle:OnActivateSkill_BP()
@@ -34,6 +38,7 @@ end
 
 function MaxVehicle:OnDeActivateSkill_BP()
     MaxVehicle.SuperClass.OnDeActivateSkill_BP(self)
+    DestroyParticle(self)
 end
 
 function MaxVehicle:CanActivateSkill_BP()

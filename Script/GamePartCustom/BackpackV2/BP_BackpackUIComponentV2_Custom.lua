@@ -51,6 +51,10 @@ function BP_BackpackUIComponentV2_Custom:ClickLockBackpackItem(DataType)
     if not PlayerController then return end
     local Player = PlayerController:GetPawn()
     DataType = math.floor(tonumber(DataType) or 0)
+    if Player == nil then
+        ugcprint("[背包UI] 未找到本机玩家，锁格点击忽略 DataType=", DataType)
+        return
+    end
 
     if DataType == 1 then
         local Cap = 0

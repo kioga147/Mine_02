@@ -81,8 +81,6 @@ function UGCPlayerPawn:ReceiveBeginPlay()
 end
 
 function UGCPlayerPawn:SetMineCarMode(bEnable)
-    ugcprint("[矿车模式] 设置矿车模式:", bEnable)
-    
     local IsServer = false
     if UGCGameSystem and UGCGameSystem.IsServer then
         IsServer = UGCGameSystem.IsServer()
@@ -90,22 +88,12 @@ function UGCPlayerPawn:SetMineCarMode(bEnable)
         IsServer = UE_IsServer()
     end
     
-    ugcprint("[矿车模式] 当前是否服务器:", IsServer)
-    
-    if UGCPersistEffectSystem then
-        local BaseComp = UGCPersistEffectSystem.GetPersistBaseComponentByContent(self)
-        ugcprint("[矿车模式] PersistBaseComponent:", tostring(BaseComp))
-    end
-    
     if IsServer then
-        ugcprint("[矿车模式] 已在服务器端，直接执行")
         self:DoSetMineCarMode(bEnable)
     else
-        ugcprint("[矿车模式] 在客户端，发送RPC到服务器")
         if self.Server_SetMineCarMode then
             self:Server_SetMineCarMode(bEnable)
         else
-            ugcprint("[矿车模式] ❌ Server_SetMineCarMode RPC不存在")
             self:DoSetMineCarMode(bEnable)
         end
     end
@@ -119,7 +107,6 @@ end
 function UGCPlayerPawn:DoSetMineCarMode(bEnable)
     if bEnable then
         if self.bIsMineCarMode then
-            ugcprint("[矿车模式] ⚠️ 矿车模式已激活")
             return
         end
         
@@ -128,7 +115,6 @@ function UGCPlayerPawn:DoSetMineCarMode(bEnable)
         
         if UGCPlayerPawnSystem and UGCPlayerPawnSystem.SetIsInvincible then
             pcall(UGCPlayerPawnSystem.SetIsInvincible, self, true)
-            ugcprint("[矿车模式] ✅ 矿车模式无敌已开启")
         end
         
         if UGCGameSystem and UGCGameSystem.IsServer() then
@@ -142,60 +128,40 @@ function UGCPlayerPawn:DoSetMineCarMode(bEnable)
                         UGCAttributeSystem.SetGameAttributeValue(self, UGCNativeGameAttributeType.Character_Health, self._mineCarMaxHealth)
                     end
                 end)
-                ugcprint("[矿车模式] ✅ 生命值保护已开启 (MaxHealth:", self._mineCarMaxHealth, ")")
             end
         end
         
         local BuffPath = "/Game/Mine_02/Asset/Blueprint/Prefabs/Buffs/Transform_Mningcar.Transform_Mningcar_C"
         
         if UGCPersistEffectSystem then
-            ugcprint("[矿车模式] 准备添加变身Buff")
-            
             local BuffClass = nil
             if UGCObjectUtility and UGCObjectUtility.LoadClass and UGCGameSystem and UGCGameSystem.GetUGCResourcesFullPath then
                 local FullPath = UGCGameSystem.GetUGCResourcesFullPath('Asset/Blueprint/Prefabs/Buffs/Transform_Mningcar.Transform_Mningcar_C')
-                ugcprint("[矿车模式] Buff完整路径:", FullPath)
-                
                 BuffClass = UGCObjectUtility.LoadClass(FullPath)
-                ugcprint("[矿车模式] LoadClass结果:", tostring(BuffClass))
             end
             
             if not BuffClass then
-                ugcprint("[矿车模式] ⚠️ LoadClass失败，尝试直接使用路径")
                 BuffClass = BuffPath
             end
             
             local Ok, Result = pcall(UGCPersistEffectSystem.AddBuffByClass, self, BuffClass)
-            if Ok then
-                ugcprint("[矿车模式] ✅ AddBuffByClass调用成功")
-                
-                local GetBuffsOk, Buffs = pcall(UGCPersistEffectSystem.GetBuffsByClass, self, BuffClass)
-                if GetBuffsOk and Buffs and type(Buffs) == "table" and #Buffs > 0 then
-                    ugcprint("[矿车模式] ✅ 确认Buff已添加，数量:", #Buffs)
-                else
-                    ugcprint("[矿车模式] ⚠️ GetBuffsByClass结果:", tostring(Buffs))
-                end
-            else
+            if not Ok then
                 ugcprint("[矿车模式] ❌ AddBuffByClass调用失败:", tostring(Result))
             end
-        else
-            ugcprint("[矿车模式] ❌ UGCPersistEffectSystem不可用")
         end
         
-        ugcprint("[矿车模式] ✅ 已切换到矿车模式, 移动速度已更新")
+        ugcprint("[矿车模式] ✅ 已切换到矿车模式")
     else
         self.bIsMineCarMode = false
         
         if UGCPlayerPawnSystem and UGCPlayerPawnSystem.SetIsInvincible then
             pcall(UGCPlayerPawnSystem.SetIsInvincible, self, false)
-            ugcprint("[矿车模式] ✅ 矿车模式无敌已关闭")
         end
         
         if UGCGameSystem and UGCGameSystem.IsServer() then
             if self._mineCarHealthDelegate and UGCAttributeSystem.RemoveGameAttributeChangedDelegate then
                 UGCAttributeSystem.RemoveGameAttributeChangedDelegate(self, UGCNativeGameAttributeType.Character_Health, self._mineCarHealthDelegate)
                 self._mineCarHealthDelegate = nil
-                ugcprint("[矿车模式] ✅ 生命值保护已关闭")
             end
             self._mineCarMaxHealth = 0
         end
@@ -214,9 +180,7 @@ function UGCPlayerPawn:DoSetMineCarMode(bEnable)
             end
             
             local Ok, Result = pcall(UGCPersistEffectSystem.RemoveBuffByClass, self, BuffClass)
-            if Ok then
-                ugcprint("[矿车模式] ✅ 已移除变身Buff")
-            else
+            if not Ok then
                 ugcprint("[矿车模式] ❌ 移除变身Buff失败:", tostring(Result))
             end
             
@@ -232,7 +196,6 @@ function UGCPlayerPawn:DoSetMineCarMode(bEnable)
                         for _, SkillInst in ipairs(ExistSkills) do
                             if UE.IsValid(SkillInst) then
                                 UGCPersistEffectSystem.RemoveSkillInstance(self, SkillInst)
-                                ugcprint("[矿车模式] ✅ 已移除BasicVehicle技能实例")
                             end
                         end
                     end
@@ -242,16 +205,10 @@ function UGCPlayerPawn:DoSetMineCarMode(bEnable)
         
         local MovementComp = self.CharacterMovement
         if MovementComp then
-            local Ok, InputVec = pcall(MovementComp.ConsumeInputVector, MovementComp)
-            if Ok and InputVec then
-                local X, Y, Z = InputVec.X, InputVec.Y, InputVec.Z
-                ugcprint(string.format("[矿车模式] 已清除输入向量: (%.2f, %.2f, %.2f)", X or 0, Y or 0, Z or 0))
-            end
-            
             pcall(function()
+                MovementComp.ConsumeInputVector(MovementComp)
                 MovementComp.Acceleration = {X = 0, Y = 0, Z = 0}
                 MovementComp.Velocity = {X = 0, Y = 0, Z = 0}
-                ugcprint("[矿车模式] 已重置加速度和速度")
             end)
             
             if UGCTimerManagerSystem and UGCTimerManagerSystem.SetTimer then
@@ -260,7 +217,6 @@ function UGCPlayerPawn:DoSetMineCarMode(bEnable)
                         local MC = self.CharacterMovement
                         if MC then
                             pcall(MC.ConsumeInputVector, MC)
-                            ugcprint("[矿车模式] 延迟安全清除: 已再次清除输入")
                         end
                     end
                 end, 0.1, false)
@@ -269,7 +225,7 @@ function UGCPlayerPawn:DoSetMineCarMode(bEnable)
         
         UpdateMoveSpeed(self)
         
-        ugcprint("[矿车模式] ❌ 已退出矿车模式, 移动状态已清除")
+        ugcprint("[矿车模式] 已退出矿车模式")
     end
 end
 

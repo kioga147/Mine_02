@@ -10,6 +10,7 @@ local Diamond_mine = {
 
 UGCGameSystem.UGCRequire('Script.GameAttribute.game_attribute_type')
 local MiningSystem = UGCGameSystem.UGCRequire('Script.GamePartCustom.MiningSystem')
+local MineTestDropConfig = UGCGameSystem.UGCRequire('Script.Common.MineTestDropConfig')
 local MineZoneManager = nil
 do
     local Ok, Mod = pcall(function()
@@ -93,13 +94,16 @@ end
 function Diamond_mine:BPDie(KillingDamage, EventInstigator,DamageCauser,DamageEvent,DamageTypeID)
     self.ShakeAmplitude = 0
     self.ShakeSpeed = 0
-    if MineZoneManager and UGCGameSystem.IsServer() then
-        local zoneId, oreKey = MineZoneManager.GetZoneIdByActor(self)
-        if zoneId and oreKey then
-            MineZoneManager.OnOreDestroyed(zoneId, oreKey, self)
+    if UGCGameSystem.IsServer() then
+        if MineZoneManager then
+            local zoneId, oreKey = MineZoneManager.GetZoneIdByActor(self)
+            if zoneId and oreKey then
+                MineZoneManager.OnOreDestroyed(zoneId, oreKey, self, EventInstigator)
+            end
         end
+        self.UGCPresetCommonDropItemComponent:StartDrop(self, EventInstigator, {})
+        MineTestDropConfig.GiveTestGold(EventInstigator)
     end
-    self.UGCPresetCommonDropItemComponent:StartDrop(self, EventInstigator, {})
 end
 
 

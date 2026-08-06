@@ -1,0 +1,33 @@
+# Oasis / Unreal-style generated folders
+Saved/
+Intermediate/
+DerivedDataCache/
+Binaries/
+Build/
+
+# Logs, dumps, and temporary output
+*.log
+*.tmp
+*.temp
+*.bak
+*.backup
+*.pid
+*.dmp
+
+# Local editor and machine state
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# OS metadata
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local environment files
+.env
+.env.*
+!.env.example

@@ -5,8 +5,8 @@
 ---@field DefaultSceneRoot1 USceneComponent
 ---@field DefaultSceneRoot USceneComponent
 --Edit Below--
---- 矿区传送大厅：解锁 8500，传送一次 3000
---- 复用鉴定所提示 UI：解锁 / 传送(当前矿区) / 切换矿区 / 关闭
+--- 矿区传送大厅：解锁 8500，传送矿区 3000，返回出生点 0
+--- 复用鉴定所提示 UI：解锁 / 传送(当前矿区) / 返回出生点 / 关闭
 local MineTeleportConfig = nil
 do
     local Ok, Mod = pcall(function()
@@ -18,6 +18,9 @@ do
         MineTeleportConfig = {
             UnlockCost = 8500,
             TeleportCost = 3000,
+            SpawnCost = 0,
+            SPAWN_ZONE_ID = 6,
+            SpawnPoint = { X = 20830, Y = 28740, Z = 192 },
             Zones = {
                 [1] = { Name = "石滩" },
                 [2] = { Name = "煤矿场" },
@@ -26,13 +29,24 @@ do
                 [5] = { Name = "宝石矿区" },
             },
             GetZone = function(ZoneId)
-                return MineTeleportConfig.Zones[tonumber(ZoneId) or 0]
+                local Id = tonumber(ZoneId) or 0
+                if Id == 6 then
+                    return { Name = "出生点", IsSpawn = true }
+                end
+                return MineTeleportConfig.Zones[Id]
+            end,
+            GetTotalCount = function() return 6 end,
+            IsSpawnZone = function(ZoneId) return tonumber(ZoneId) == 6 end,
+            GetTeleportCost = function(ZoneId)
+                if tonumber(ZoneId) == 6 then return 0 end
+                return 3000
+            end,
+            GetSpawnPoint = function()
+                return MineTeleportConfig.SpawnPoint
             end,
             NextZoneId = function(CurrentId)
                 local Id = (tonumber(CurrentId) or 1) + 1
-                if Id > 5 then
-                    Id = 1
-                end
+                if Id > 6 then Id = 1 end
                 return Id
             end,
         }
@@ -86,16 +100,40 @@ local function SetText(Widget, Text)
     end
 end
 
+local function FindNearestZone(self)
+    local myPos = self.GetActorLocation and self:GetActorLocation() or nil
+    if myPos == nil then
+        return 1
+    end
+    local bestId = 1
+    local bestDist = math.huge
+    for zid = 1, 5 do
+        local zone = MineTeleportConfig and MineTeleportConfig.GetZone(zid)
+        if zone then
+            local dx = (zone.HallX or zone.PadX or 0) - myPos.X
+            local dy = (zone.HallY or zone.PadY or 0) - myPos.Y
+            local dist = dx * dx + dy * dy
+            if dist < bestDist then
+                bestDist = dist
+                bestId = zid
+            end
+        end
+    end
+    return bestId
+end
+
 function BP_MineTeleportHall:ReceiveBeginPlay()
     if BP_MineTeleportHall.SuperClass and BP_MineTeleportHall.SuperClass.ReceiveBeginPlay then
         pcall(BP_MineTeleportHall.SuperClass.ReceiveBeginPlay, self)
     end
 
-    self.SelectedZoneId = 1
+    if self.SelectedZoneId == nil or self.SelectedZoneId == 0 then
+        self.SelectedZoneId = FindNearestZone(self)
+    end
 
     local Trigger = GetInteractTrigger(self)
     if Trigger == nil then
-        ugcprint("[MineTeleport] InteractTrigger 缺失")
+        ugcprint("[MineTeleport] ❌ InteractTrigger 组件不存在，请在蓝图中添加 USphereComponent 并命名为 InteractTrigger")
         return
     end
     if self.bOverlapBound then
@@ -103,26 +141,32 @@ function BP_MineTeleportHall:ReceiveBeginPlay()
     end
     self.bOverlapBound = true
 
-    pcall(function()
-        if Trigger.SetGenerateOverlapEvents then
-            Trigger:SetGenerateOverlapEvents(true)
-        else
-            Trigger.bGenerateOverlapEvents = true
+    Trigger.bGenerateOverlapEvents = true
+    if Trigger.SphereRadius ~= nil then
+        Trigger.SphereRadius = 300
+    end
+    if Trigger.SetSphereRadius then
+        pcall(function() Trigger:SetSphereRadius(300) end)
+    end
+
+    local overlapOk, overlapErr = pcall(function()
+        if Trigger.OnComponentBeginOverlap then
+            Trigger.OnComponentBeginOverlap:Add(self.OnTriggerBeginOverlap, self)
         end
-        if Trigger.SetSphereRadius then
-            Trigger:SetSphereRadius(250)
-        elseif Trigger.SphereRadius ~= nil then
-            Trigger.SphereRadius = 250
+        if Trigger.OnComponentEndOverlap then
+            Trigger.OnComponentEndOverlap:Add(self.OnTriggerEndOverlap, self)
         end
     end)
 
-    if Trigger.OnComponentBeginOverlap then
-        Trigger.OnComponentBeginOverlap:Add(self.OnTriggerBeginOverlap, self)
-    end
-    if Trigger.OnComponentEndOverlap then
-        Trigger.OnComponentEndOverlap:Add(self.OnTriggerEndOverlap, self)
-    end
-    ugcprint("[MineTeleport] Overlap 已绑定")
+    local curRadius = 0
+    pcall(function() curRadius = Trigger.SphereRadius end)
+
+    local zoneName = "?"
+    local zone = MineTeleportConfig and MineTeleportConfig.GetZone(self.SelectedZoneId)
+    if zone then zoneName = zone.Name end
+    ugcprint(string.format("[MineTeleport] ✅ 传送大厅初始化 (矿区=%s, ZoneId=%d, 半径=%.0f, Overlap=%s, BindOk=%s)",
+        zoneName, self.SelectedZoneId or 1, curRadius,
+        tostring(Trigger.bGenerateOverlapEvents), tostring(overlapOk)))
 end
 
 function BP_MineTeleportHall:ReceiveEndPlay()
@@ -157,7 +201,6 @@ function BP_MineTeleportHall:OnTriggerBeginOverlap(
         return
     end
     self.bLocalPlayerInside = true
-    ugcprint("[MineTeleport] 本机玩家进入传送大厅")
     self:ShowPrompt()
 end
 
@@ -167,7 +210,6 @@ function BP_MineTeleportHall:OnTriggerEndOverlap(
         return
     end
     self.bLocalPlayerInside = false
-    ugcprint("[MineTeleport] 本机玩家离开传送大厅")
     self:HidePrompt()
 end
 
@@ -191,7 +233,11 @@ function BP_MineTeleportHall:BindPCCallbacks()
         if Facility.bLocalPlayerInside then
             Facility:RefreshPromptUI()
         end
-        ugcprint("[MineTeleport] 已传送 ZoneId=" .. tostring(ZoneId))
+    end
+    PC.OnMineReturnedToSpawn = function()
+        if Facility.bLocalPlayerInside then
+            Facility:RefreshPromptUI()
+        end
     end
 end
 
@@ -203,6 +249,7 @@ function BP_MineTeleportHall:UnbindPCCallbacks()
     PC.OnMineTeleportNotify = nil
     PC.OnMineTeleportUnlocked = nil
     PC.OnMineTeleported = nil
+    PC.OnMineReturnedToSpawn = nil
 end
 
 function BP_MineTeleportHall:ApplyTeleportPromptLabels(Widget)
@@ -216,12 +263,18 @@ function BP_MineTeleportHall:ApplyTeleportPromptLabels(Widget)
     end
 
     local UnlockCost = MineTeleportConfig.UnlockCost
-    local TeleportCost = MineTeleportConfig.TeleportCost
     local Zone = MineTeleportConfig.GetZone(self.SelectedZoneId) or { Name = "?" }
+    local IsSpawn = MineTeleportConfig.IsSpawnZone(self.SelectedZoneId)
+    local TargetCost = MineTeleportConfig.GetTeleportCost(self.SelectedZoneId)
 
-    SetText(GetW(Widget, "Txt_Unlock"), string.format("解锁传送大厅 (%d)", UnlockCost))
-    SetText(GetW(Widget, "Txt_Quick"), string.format("传送·%s (%d)", Zone.Name, TeleportCost))
-    SetText(GetW(Widget, "Txt_Manual"), "切换下一矿区")
+    SetText(GetW(Widget, "Txt_Unlock"), string.format("解锁大厅 (%d)", UnlockCost))
+    if IsSpawn then
+        SetText(GetW(Widget, "Txt_Quick"), string.format("返回出生点 (%d)", TargetCost))
+    else
+        SetText(GetW(Widget, "Txt_Quick"), string.format("传送·%s (%d)", Zone.Name, TargetCost))
+    end
+    SetText(GetW(Widget, "Txt_Manual"), "切换")
+    SetText(GetW(Widget, "Txt_Enter"), "")
     SetText(GetW(Widget, "Txt_Close"), "关闭")
 end
 
@@ -246,10 +299,13 @@ function BP_MineTeleportHall:RefreshPromptUI()
         }
     end
 
-    -- 把矿区选择同步进状态，并借用鉴定 UI 的 RefreshShopState 显隐按钮
+    local Zone = MineTeleportConfig.GetZone(self.SelectedZoneId) or { Name = "?" }
+    Status.Mode = "teleport"
     Status.SelectedZoneId = self.SelectedZoneId
-    Status.JadeCount = 1 -- 借用字段：保证「快速/手动」在解锁后可见（鉴定 UI 用 JadeCount 无关此处）
-    Status.QuickCost = MineTeleportConfig.TeleportCost
+    Status.JadeCount = 1
+    Status.ZoneName = Zone.Name
+    Status.TargetCost = MineTeleportConfig.GetTeleportCost(self.SelectedZoneId)
+    Status.TargetIsSpawn = MineTeleportConfig.IsSpawnZone(self.SelectedZoneId)
 
     self:ApplyTeleportPromptLabels(Widget)
     if Widget.RefreshShopState then
@@ -257,28 +313,6 @@ function BP_MineTeleportHall:RefreshPromptUI()
             Widget:RefreshShopState(Status)
         end)
     end
-
-    -- Refresh 后再覆盖文案（避免鉴定所默认文案盖掉）
-    self:ApplyTeleportPromptLabels(Widget)
-
-    local Zone = MineTeleportConfig.GetZone(self.SelectedZoneId) or { Name = "?" }
-    local Line
-    if not Status.bUnlocked then
-        Line = string.format(
-            "矿区传送大厅 · 请先解锁（%d 金币，当前 %d）",
-            Status.UnlockCost or MineTeleportConfig.UnlockCost,
-            Status.GoldCount or 0
-        )
-    else
-        Line = string.format(
-            "矿区传送大厅 · 当前目标：%s · 传送 %d 金币（余额 %d）%s",
-            Zone.Name,
-            Status.TeleportCost or MineTeleportConfig.TeleportCost,
-            Status.GoldCount or 0,
-            (Status.LastMsg and Status.LastMsg ~= "") and (" · " .. Status.LastMsg) or ""
-        )
-    end
-    SetText(GetW(Widget, "Txt_Prompt"), Line)
 end
 
 function BP_MineTeleportHall:ShowPrompt()
@@ -292,12 +326,14 @@ function BP_MineTeleportHall:ShowPrompt()
     self:BindPCCallbacks()
 
     local Path = UGCGameSystem.GetUGCResourcesFullPath(PROMPT_UI_PATH)
+    ugcprint("[MineTeleport] 📱 加载传送UI: " .. tostring(Path))
     UGCWidgetManagerSystem.CreateWidgetAsync(Path, function(Widget)
         self.bPromptOpening = false
         if not Widget then
-            ugcprint("[MineTeleport] 提示 UI 创建失败")
+            ugcprint("[MineTeleport] ❌ UI加载失败")
             return
         end
+        ugcprint("[MineTeleport] ✅ UI加载成功")
         if not self.bLocalPlayerInside then
             if Widget.RemoveFromParent then
                 Widget:RemoveFromParent()
@@ -316,23 +352,36 @@ function BP_MineTeleportHall:ShowPrompt()
 
         local Facility = self
         if Widget.SetShopCallbacks then
+            ugcprint("[MineTeleport] 🎯 设置UI回调")
             Widget:SetShopCallbacks({
                 OnUnlock = function()
+                    ugcprint("[MineTeleport] 🖱️ 解锁")
                     Facility:OnUnlockClicked()
                 end,
                 OnQuick = function()
-                    Facility:OnTeleportClicked()
+                    if MineTeleportConfig.IsSpawnZone(Facility.SelectedZoneId) then
+                        ugcprint("[MineTeleport] 🖱️ 返回出生点")
+                        Facility:OnReturnToSpawnClicked()
+                    else
+                        ugcprint("[MineTeleport] 🖱️ 传送至矿区")
+                        Facility:OnTeleportClicked()
+                    end
                 end,
                 OnManual = function()
-                    Facility:OnCycleZoneClicked()
+                    ugcprint("[MineTeleport] 🖱️ 切换")
+                    Facility:OnSwitchZoneClicked()
+                end,
+                OnEnter = function()
+                    ugcprint("[MineTeleport] 🖱️ Enter(未使用)")
                 end,
                 OnClose = function()
                     Facility:OnCloseClicked()
                 end,
             })
+        else
+            ugcprint("[MineTeleport] ⚠️ Widget 没有 SetShopCallbacks 方法")
         end
         self:RefreshPromptUI()
-        ugcprint("[MineTeleport] 大厅面板已显示")
     end)
 end
 
@@ -362,13 +411,15 @@ end
 
 function BP_MineTeleportHall:OnUnlockClicked()
     if not self.bLocalPlayerInside then
+        ugcprint("[MineTeleport] ⚠️ 点击解锁但不在大厅内 (bLocalPlayerInside=false)")
         return
     end
     local PC = GetLocalPC()
     if PC == nil then
+        ugcprint("[MineTeleport] ❌ 解锁失败: PC为nil")
         return
     end
-    ugcprint("[MineTeleport] 请求解锁")
+    ugcprint("[MineTeleport] 🔓 开始解锁传送大厅")
     if PC.RequestUnlockMineTeleport then
         PC:RequestUnlockMineTeleport()
     else
@@ -376,16 +427,38 @@ function BP_MineTeleportHall:OnUnlockClicked()
     end
 end
 
+function BP_MineTeleportHall:OnSwitchZoneClicked()
+    local NextId = MineTeleportConfig.NextZoneId(self.SelectedZoneId)
+    local NextZone = MineTeleportConfig.GetZone(NextId)
+    local NextName = NextZone and NextZone.Name or "?"
+    ugcprint(string.format("[MineTeleport] ➡️ 切换: → %s", NextName))
+    self.SelectedZoneId = NextId
+    self:RefreshPromptUI()
+end
+
 function BP_MineTeleportHall:OnTeleportClicked()
     if not self.bLocalPlayerInside then
+        ugcprint("[MineTeleport] ⚠️ 不在大厅内")
         return
     end
     local PC = GetLocalPC()
     if PC == nil then
+        ugcprint("[MineTeleport] ❌ 传送失败: PC为nil")
         return
     end
     local ZoneId = self.SelectedZoneId or 1
-    ugcprint("[MineTeleport] 请求传送 ZoneId=" .. tostring(ZoneId))
+    local IsSpawn = MineTeleportConfig.IsSpawnZone(ZoneId)
+
+    if IsSpawn then
+        ugcprint("[MineTeleport] 🏠 转发生: 出生点")
+        self:OnReturnToSpawnClicked()
+        return
+    end
+
+    local Zone = MineTeleportConfig.GetZone(ZoneId) or {}
+    local Cost = MineTeleportConfig.GetTeleportCost(ZoneId)
+    ugcprint(string.format("[MineTeleport] 🚀 传送至 %s (矿区%d, 费用%d)",
+        Zone.Name or "?", ZoneId, Cost))
     if PC.RequestTeleportToMineZone then
         PC:RequestTeleportToMineZone(ZoneId)
     else
@@ -393,14 +466,26 @@ function BP_MineTeleportHall:OnTeleportClicked()
     end
 end
 
-function BP_MineTeleportHall:OnCycleZoneClicked()
+function BP_MineTeleportHall:OnReturnToSpawnClicked()
     if not self.bLocalPlayerInside then
+        ugcprint("[MineTeleport] ⚠️ 不在大厅内")
         return
     end
-    self.SelectedZoneId = MineTeleportConfig.NextZoneId(self.SelectedZoneId)
-    local Zone = MineTeleportConfig.GetZone(self.SelectedZoneId)
-    ugcprint("[MineTeleport] 切换目标 -> " .. tostring(self.SelectedZoneId) .. " " .. (Zone and Zone.Name or "?"))
-    self:RefreshPromptUI()
+    local PC = GetLocalPC()
+    if PC == nil then
+        ugcprint("[MineTeleport] ❌ 返回出生点失败: PC为nil")
+        return
+    end
+    local spawn = MineTeleportConfig.GetSpawnPoint()
+    local sx = spawn and spawn.X or 0
+    local sy = spawn and spawn.Y or 0
+    local sz = spawn and spawn.Z or 192
+    ugcprint(string.format("[MineTeleport] 🏠 返回出生点 (%.0f,%.0f,%.0f)", sx, sy, sz))
+    if PC.RequestReturnToSpawn then
+        PC:RequestReturnToSpawn()
+    else
+        UnrealNetwork.CallUnrealRPC(PC, PC, "Server_ReturnToSpawn")
+    end
 end
 
 return BP_MineTeleportHall

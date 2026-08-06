@@ -1,6 +1,7 @@
 ---@class Advanced_MiningTruck_C:Template_Melee_TangDao_Handle_C
 --Edit Below--
 local Advanced_MiningTruck = {} 
+local VEHICLE_REPAIR_ID = 3
 
 local function GetPlayerPawnFromItem(Item)
     if not Item then
@@ -61,8 +62,77 @@ local function GetPlayerPawnFromItem(Item)
     return nil
 end
 
+local function IsVehicleBroken(Player)
+    if Player == nil or Player.GetController == nil then
+        return false
+    end
+    local Ok, PC = pcall(function()
+        return Player:GetController()
+    end)
+    if not Ok or PC == nil or PC.GetVehicleRepairStatus == nil then
+        return false
+    end
+    local StatusOk, Status = pcall(function()
+        return PC:GetVehicleRepairStatus(VEHICLE_REPAIR_ID)
+    end)
+    return StatusOk and type(Status) == "table" and (Status.bBroken == true or Status.bPendingCheck == true)
+end
+
+local function StopMineCarVisual(Player)
+    if Player == nil then
+        return
+    end
+    if Player.DoSetMineCarMode then
+        Player:DoSetMineCarMode(false)
+    elseif Player.SetMineCarMode then
+        Player:SetMineCarMode(false)
+    end
+end
+
+local function NotifyRepairRequired(Player)
+    local Msg = "采矿车无法使用，请回维修处检查/维修后再使用"
+    if UGCWidgetManagerSystem and UGCWidgetManagerSystem.ShowTipsUIWithPC then
+        local PC = nil
+        if Player and Player.GetController then
+            pcall(function()
+                PC = Player:GetController()
+            end)
+        end
+        pcall(function()
+            UGCWidgetManagerSystem.ShowTipsUIWithPC(Msg, PC)
+        end)
+    end
+    ugcprint("[VehicleRepair] " .. Msg)
+end
+
+local function RequestBeginTrip(Player)
+    if Player == nil or Player.GetController == nil then
+        return false
+    end
+    local Ok, PC = pcall(function()
+        return Player:GetController()
+    end)
+    if not Ok or PC == nil then
+        return false
+    end
+    if UGCGameSystem.IsServer() and PC.Server_BeginMineCarTrip then
+        PC:Server_BeginMineCarTrip(VEHICLE_REPAIR_ID)
+        return true
+    elseif PC.RequestBeginMineCarTrip then
+        PC:RequestBeginMineCarTrip(VEHICLE_REPAIR_ID)
+        return true
+    end
+    return false
+end
+
 function Advanced_MiningTruck:CanUseV2()
     local Player = GetPlayerPawnFromItem(self)
+    if IsVehicleBroken(Player) then
+        StopMineCarVisual(Player)
+        NotifyRepairRequired(Player)
+        ugcprint("[矿车物品] 高级采矿车已损坏，需要先维修")
+        return false
+    end
     if Player and Player.IsMineCarMode and Player:IsMineCarMode() then
         return false
     end
@@ -70,9 +140,23 @@ function Advanced_MiningTruck:CanUseV2()
 end
 
 function Advanced_MiningTruck:OnUseV2()
-    Advanced_MiningTruck.SuperClass.OnUseV2(self);
-    
     local Player = GetPlayerPawnFromItem(self)
+    if IsVehicleBroken(Player) then
+        StopMineCarVisual(Player)
+        NotifyRepairRequired(Player)
+        ugcprint("[VehicleRepair] Advanced mining truck is broken; repair required")
+        return
+    end
+    if Player and Player.IsMineCarMode and Player:IsMineCarMode() then
+        ugcprint("[VehicleRepair] Mine car mode already active")
+        return
+    end
+
+    Advanced_MiningTruck.SuperClass.OnUseV2(self);
+    if RequestBeginTrip(Player) then
+        return
+    end
+
     
     if Player and Player.SetMineCarMode then
         Player:SetMineCarMode(true)
@@ -90,8 +174,33 @@ function Advanced_MiningTruck:OnDisuseV2()
     end
 end
 
+function Advanced_MiningTruck:CanEquip()
+    local Player = GetPlayerPawnFromItem(self)
+    if IsVehicleBroken(Player) then
+        StopMineCarVisual(Player)
+        NotifyRepairRequired(Player)
+        ugcprint("[VehicleRepair] Advanced mining truck CanEquip blocked by repair state")
+        return false
+    end
+    if Advanced_MiningTruck.SuperClass.CanEquip then
+        return Advanced_MiningTruck.SuperClass.CanEquip(self)
+    end
+    return true
+end
+
 function Advanced_MiningTruck:OnEquip()
+    local Player = GetPlayerPawnFromItem(self)
+    if IsVehicleBroken(Player) then
+        StopMineCarVisual(Player)
+        NotifyRepairRequired(Player)
+        ugcprint("[VehicleRepair] Advanced mining truck equip blocked by repair state")
+        return
+    end
     Advanced_MiningTruck.SuperClass.OnEquip(self);
+    if Player and Player.IsMineCarMode and Player:IsMineCarMode() then
+        return
+    end
+    RequestBeginTrip(Player)
 end
 
 function Advanced_MiningTruck:OnUnEquip()

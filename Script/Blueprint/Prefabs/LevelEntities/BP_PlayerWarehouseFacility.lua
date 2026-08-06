@@ -45,13 +45,18 @@ end
 
 local BP_PlayerWarehouseFacility = {
     bLocalPlayerInside = false,
+    bPromptDismissed = false,
     PromptWidget = nil,
     bPromptOpening = false,
     bOverlapBound = false,
     PayType = 0, -- 0=金币 1=绿洲币
+    RefreshTimer = nil,
 }
 
 local PROMPT_UI_PATH = "Asset/Blueprint/Prefabs/UI/WBP_JadeFacilityPrompt.WBP_JadeFacilityPrompt_C"
+local PROMPT_SHOW_DISTANCE = 280
+local PROMPT_HIDE_DISTANCE = 430
+local PROMPT_REFRESH_INTERVAL = 0.5
 
 local function IsLocalPlayerPawn(OtherActor)
     if OtherActor == nil then
@@ -67,6 +72,48 @@ end
 
 local function GetLocalPC()
     return UGCGameSystem.GetLocalPlayerController()
+end
+
+local function GetActorLocationSafe(Actor)
+    if Actor == nil then
+        return nil
+    end
+    local Ok, Loc = pcall(function()
+        return Actor:K2_GetActorLocation()
+    end)
+    if Ok then
+        return Loc
+    end
+    return nil
+end
+
+local function GetComponentLocationSafe(Component)
+    if Component == nil then
+        return nil
+    end
+    local Ok, Loc = pcall(function()
+        return Component:K2_GetComponentLocation()
+    end)
+    if Ok then
+        return Loc
+    end
+    return nil
+end
+
+local function GetDistanceSq(A, B)
+    if A == nil or B == nil then
+        return nil
+    end
+    local AX = tonumber(A.X or A.x) or 0
+    local AY = tonumber(A.Y or A.y) or 0
+    local AZ = tonumber(A.Z or A.z) or 0
+    local BX = tonumber(B.X or B.x) or 0
+    local BY = tonumber(B.Y or B.y) or 0
+    local BZ = tonumber(B.Z or B.z) or 0
+    local DX = AX - BX
+    local DY = AY - BY
+    local DZ = AZ - BZ
+    return DX * DX + DY * DY + DZ * DZ
 end
 
 local function GetW(Widget, Name)
@@ -113,6 +160,7 @@ end
 function BP_PlayerWarehouseFacility:ReceiveBeginPlay()
     -- 不调用回收处父类 BeginPlay，避免绑定回收逻辑
     self.PayType = 0
+    self:StartRefreshTimer()
 
     local Trigger = GetInteractTrigger(self)
     if Trigger == nil then
@@ -125,13 +173,9 @@ function BP_PlayerWarehouseFacility:ReceiveBeginPlay()
     self.bOverlapBound = true
 
     pcall(function()
-        if Trigger.SetGenerateOverlapEvents then
-            Trigger:SetGenerateOverlapEvents(true)
-        else
-            Trigger.bGenerateOverlapEvents = true
-        end
+        Trigger.bGenerateOverlapEvents = true
         if Trigger.SetSphereRadius then
-            Trigger:SetSphereRadius(250)
+            Trigger:SetSphereRadius(250, true)
         elseif Trigger.SphereRadius ~= nil then
             Trigger.SphereRadius = 250
         end
@@ -147,6 +191,7 @@ function BP_PlayerWarehouseFacility:ReceiveBeginPlay()
 end
 
 function BP_PlayerWarehouseFacility:ReceiveEndPlay()
+    self:StopRefreshTimer()
     self:UnbindPCCallbacks()
     local Trigger = GetInteractTrigger(self)
     if Trigger and self.bOverlapBound then
@@ -170,6 +215,9 @@ function BP_PlayerWarehouseFacility:OnTriggerBeginOverlap(
     if not IsLocalPlayerPawn(OtherActor) then
         return
     end
+    if self.bPromptDismissed then
+        return
+    end
     if self.bLocalPlayerInside then
         return
     end
@@ -184,8 +232,62 @@ function BP_PlayerWarehouseFacility:OnTriggerEndOverlap(
         return
     end
     self.bLocalPlayerInside = false
+    self.bPromptDismissed = false
     ugcprint("[Warehouse] 本机玩家离开仓库")
     self:HidePrompt()
+end
+
+function BP_PlayerWarehouseFacility:IsLocalPlayerNear(Distance)
+    local LocalPawn = UGCGameSystem.GetLocalPlayerPawn()
+    local PawnLoc = GetActorLocationSafe(LocalPawn)
+    local FacilityLoc = GetComponentLocationSafe(self.InteractTrigger) or GetActorLocationSafe(self)
+    local DistSq = GetDistanceSq(PawnLoc, FacilityLoc)
+    if DistSq == nil then
+        return false
+    end
+    return DistSq <= Distance * Distance
+end
+
+function BP_PlayerWarehouseFacility:StartRefreshTimer()
+    self:StopRefreshTimer()
+    if UGCTimerUtility == nil or UGCTimerUtility.CreateLuaTimer == nil then
+        return
+    end
+    local Facility = self
+    local Ok, Handle = pcall(function()
+        return UGCTimerUtility.CreateLuaTimer(PROMPT_REFRESH_INTERVAL, function()
+            local bNearShow = Facility:IsLocalPlayerNear(PROMPT_SHOW_DISTANCE)
+            local bNearHide = Facility:IsLocalPlayerNear(PROMPT_HIDE_DISTANCE)
+            if bNearShow then
+                Facility.bLocalPlayerInside = true
+                if Facility.bPromptDismissed ~= true then
+                    Facility:ShowPrompt()
+                end
+                if Facility.PromptWidget ~= nil then
+                    Facility:RefreshPromptUI()
+                end
+                return
+            end
+            if not bNearHide then
+                Facility.bLocalPlayerInside = false
+                Facility.bPromptDismissed = false
+                Facility:HidePrompt()
+            end
+        end, true)
+    end)
+    if Ok then
+        self.RefreshTimer = Handle
+    end
+end
+
+function BP_PlayerWarehouseFacility:StopRefreshTimer()
+    local Handle = self.RefreshTimer
+    self.RefreshTimer = nil
+    if Handle ~= nil and UGCTimerUtility and UGCTimerUtility.RemoveLuaTimer then
+        pcall(function()
+            UGCTimerUtility.RemoveLuaTimer(Handle)
+        end)
+    end
 end
 
 function BP_PlayerWarehouseFacility:BindPCCallbacks()
@@ -328,6 +430,9 @@ function BP_PlayerWarehouseFacility:ShowPrompt()
         end
         return
     end
+    if self.bPromptDismissed then
+        return
+    end
     self.bPromptOpening = true
     self:BindPCCallbacks()
 
@@ -338,7 +443,7 @@ function BP_PlayerWarehouseFacility:ShowPrompt()
             ugcprint("[Warehouse] 提示 UI 创建失败")
             return
         end
-        if not self.bLocalPlayerInside then
+        if not self.bLocalPlayerInside or self.bPromptDismissed then
             if Widget.RemoveFromParent then
                 pcall(function()
                     Widget:RemoveFromParent()
@@ -406,6 +511,7 @@ function BP_PlayerWarehouseFacility:HidePrompt()
 end
 
 function BP_PlayerWarehouseFacility:OnCloseClicked()
+    self.bPromptDismissed = true
     self:HidePrompt()
 end
 

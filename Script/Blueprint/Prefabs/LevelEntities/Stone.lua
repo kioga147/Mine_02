@@ -10,6 +10,7 @@ local Stone = {
 
 UGCGameSystem.UGCRequire('Script.GameAttribute.game_attribute_type')
 local MiningSystem = UGCGameSystem.UGCRequire('Script.GamePartCustom.MiningSystem')
+local MineTestDropConfig = UGCGameSystem.UGCRequire('Script.Common.MineTestDropConfig')
 local MineZoneManager = nil
 do
     local Ok, Mod = pcall(function()
@@ -24,7 +25,17 @@ function Stone:ReceiveBeginPlay()
     self.ShakeTime = 0
     self.CacheZ = self.StaticMesh:GetRelativeTransform().Translation.Z
     if MineZoneManager and UGCGameSystem.IsServer() then
+        local ok, loc = pcall(function() return self:K2_GetActorLocation() end)
+        if ok and loc then
+            ugcprint(string.format("[Stone] RegisterOre at (%.0f,%.0f,%.0f)", loc.X, loc.Y, loc.Z))
+        end
         MineZoneManager.RegisterOre(self, "Stone")
+    else
+        if not UGCGameSystem.IsServer() then
+            ugcprint("[Stone] ReceiveBeginPlay: 客户端不注册")
+        elseif not MineZoneManager then
+            ugcprint("[Stone] ReceiveBeginPlay: MineZoneManager 为 nil")
+        end
     end
 end
 
@@ -93,13 +104,16 @@ end
 function Stone:BPDie(KillingDamage, EventInstigator,DamageCauser,DamageEvent,DamageTypeID)
     self.ShakeAmplitude = 0
     self.ShakeSpeed = 0
-    if MineZoneManager and UGCGameSystem.IsServer() then
-        local zoneId, oreKey = MineZoneManager.GetZoneIdByActor(self)
-        if zoneId and oreKey then
-            MineZoneManager.OnOreDestroyed(zoneId, oreKey, self)
+    if UGCGameSystem.IsServer() then
+        if MineZoneManager then
+            local zoneId, oreKey = MineZoneManager.GetZoneIdByActor(self)
+            if zoneId and oreKey then
+                MineZoneManager.OnOreDestroyed(zoneId, oreKey, self, EventInstigator)
+            end
         end
+        self.UGCPresetCommonDropItemComponent:StartDrop(self, EventInstigator, {})
+        MineTestDropConfig.GiveTestGold(EventInstigator)
     end
-    self.UGCPresetCommonDropItemComponent:StartDrop(self, EventInstigator, {})
 end
 
 

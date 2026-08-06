@@ -1,5 +1,4 @@
 ---@class UGCPlayerController_C:BP_PlayerController_TopDown_C
----@field GiftPackComponent GiftPackComponent_C
 ---@field ShopV2Component ShopV2Component_C
 --Edit Below--
 local MineTeleportConfig = nil
@@ -81,6 +80,18 @@ do
                 return Requested
             end,
         }
+    end
+end
+
+local ShopV2ProductConfig = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire("Script.Common.ShopV2ProductConfig")
+    end)
+    if Ok and type(Mod) == "table" then
+        ShopV2ProductConfig = Mod
+    else
+        ShopV2ProductConfig = {}
     end
 end
 
@@ -371,7 +382,6 @@ do
     end
 end
 
-
 local ShopConfig = nil
 do
     local Ok, Mod = pcall(function()
@@ -413,6 +423,8 @@ local JADE_ITEM_ID_LEGACY = 8310018
 local GOLD_ITEM_ID = 8310002
 -- 铜镐 ItemID（与物品表 / MiningSystem 一致）
 local COPPER_PICKAXE_ITEM_ID = 8310026
+-- 测试币 ItemID（商店自定义货币，对应 UGCObject 表 1001）
+local TEST_COIN_ITEM_ID = 1001
 local UNLOCK_COST = 15000
 local QUICK_COST = 3000
 local JADE_BASE_VALUE = 600
@@ -426,6 +438,26 @@ local INITIAL_PICKAXE_MAX_RETRY = 8
 local MELEE_WEAPON_SLOT = 4
 local MELEE_SLOT_NAME = "EquipmentSlot.Core.MeleeSlot"
 local INITIAL_PICKAXE_SWITCH_DELAY_SEC = 1.0
+
+local function GetBackpackCapacity(PC)
+    if not UGCBackpackSystemV2 or not UGCBackpackSystemV2.GetCellCapacity then return 0 end
+    local Ok, Cap = pcall(UGCBackpackSystemV2.GetCellCapacity, PC)
+    return (Ok and Cap) and math.floor(tonumber(Cap) or 0) or 0
+end
+
+local function GetBackpackLevelFromCapacity(Capacity)
+    Capacity = math.floor(tonumber(Capacity) or 0)
+    local Level = 1
+    if ShopConfig and ShopConfig.GetMaxBackpackLevel then
+        for Lv = 1, ShopConfig.GetMaxBackpackLevel() do
+            local Cfg = ShopConfig.GetBackpackLevel(Lv)
+            if Cfg and Capacity >= Cfg.Slots then
+                Level = Lv
+            end
+        end
+    end
+    return Level
+end
 
 local function GetItemCount(PC, ItemID)
     if not PC or not UGCBackpackSystemV2 or not UGCBackpackSystemV2.GetItemCountV2 then
@@ -630,7 +662,7 @@ local function InvokeClient(PC, FuncName, ...)
     if not PC or not FuncName then
         return
     end
-    if IsLocalPC(PC) and type(PC[FuncName]) == "function" then
+    if IsLocalPC(PC) and type(PC[FuncName]) == "tion" then
         PC[FuncName](PC, ...)
         return
     end
@@ -642,7 +674,7 @@ local function InvokeServer(PC, FuncName, ...)
     if not PC or not FuncName then
         return
     end
-    if UGCGameSystem.IsServer() and type(PC[FuncName]) == "function" then
+    if UGCGameSystem.IsServer() and type(PC[FuncName]) == "tion" then
         PC[FuncName](PC, ...)
         return
     end
@@ -933,22 +965,101 @@ function UGCPlayerController:ReceiveBeginPlay()
         end
         UGCTimerUtility.CreateLuaTimer(1.0, InitWarehouseLater, false)
         -- 开局发放铜镐（迁自 Mine_03，延后等 Pawn/背包就绪）
-        self._InitialPickaxeRetry = 0
-        -- [Test] 1000000 gold
-        UGCTimerUtility.CreateLuaTimer(1.0, function()
-            if UGCObjectUtility.IsObjectValid(self) then
-                local cg = GetItemCount(self, GOLD_ITEM_ID)
-                if cg < 1000 then
-                    UGCBackpackSystemV2.AddItemV2(self, GOLD_ITEM_ID, 1000 - cg)
+        -- 初始装备发放（条件轮询，等待背包系统就绪）
+        local function TryGiveStarterKit(PC, Attempt)
+            if not UGCObjectUtility.IsObjectValid(PC) then return end
+            local ok, cnt = pcall(UGCBackpackSystemV2.GetItemCountV2, PC, GOLD_ITEM_ID)
+            if not ok then
+                if Attempt < 15 then
+                    UGCTimerUtility.CreateLuaTimer(2.0, function()
+                        if UGCObjectUtility.IsObjectValid(PC) then
+                            TryGiveStarterKit(PC, Attempt + 1)
+                        end
+                    end, false)
+                else
+                    ugcprint("[初始装备] 背包系统超时未就绪，放弃发放")
+                end
+                return
+            end
+            if cnt < 1000 then
+                UGCBackpackSystemV2.AddItemV2(PC, GOLD_ITEM_ID, 1000 - cnt)
+            end
+    -- 测试币：独立发放，已有铜镐也补足，避免跳过
+    if UGCGamePartSystem and UGCGamePartSystem.VirtualItemManager then
+        local ok2 = pcall(function()
+            local VIM = UGCGamePartSystem.VirtualItemManager.GetGlobalActor()
+            if VIM then
+                local Have = 0
+                if VIM.GetItemNum then
+                    local OkNum, Num = pcall(VIM.GetItemNum, VIM, TEST_COIN_ITEM_ID, PC)
+                    if OkNum and Num then
+                        Have = tonumber(Num) or 0
+                    end
+                end
+                if Have < 99999 and VIM.AddVirtualItem then
+                    VIM:AddVirtualItem(PC, TEST_COIN_ITEM_ID, 99999 - Have)
+                    ugcprint("[初始装备] 测试币补足至 99999（已有 " .. Have .. "）")
+                else
+                    ugcprint("[初始装备] 测试币已足够：" .. Have)
                 end
             end
-        end, false)
-        
-        UGCTimerUtility.CreateLuaTimer(INITIAL_PICKAXE_DELAY_SEC, function()
-            if UGCObjectUtility.IsObjectValid(self) then
-                self:GiveInitialCopperPickaxe()
+        end)
+        if not ok2 then
+            ugcprint("[初始装备] 测试币发放失败（VirtualItemManager 未就绪）")
+        end
+    end
+
+
+    -- 测试币独立补发（带重试，确保 VIM 就绪后再给，放在铜镐检查之前确保一定执行）
+    local function GiveTestCurrency(Attempt)
+        if not UGCObjectUtility.IsObjectValid(self) then return end
+        if Attempt > 10 then
+            ugcprint("[初始装备] 测试币补发失败（VIM 超时未就绪）")
+            return
+        end
+        if not UGCGamePartSystem or not UGCGamePartSystem.VirtualItemManager then
+            UGCTimerUtility.CreateLuaTimer(2.0, function()
+                GiveTestCurrency(Attempt + 1)
+            end, false)
+            return
+        end
+        local VIM = UGCGamePartSystem.VirtualItemManager.GetGlobalActor()
+        if not VIM or not VIM.AddVirtualItem then
+            UGCTimerUtility.CreateLuaTimer(2.0, function()
+                GiveTestCurrency(Attempt + 1)
+            end, false)
+            return
+        end
+        local Have = 0
+        if VIM.GetItemNum then
+            local OkNum, Num = pcall(VIM.GetItemNum, VIM, TEST_COIN_ITEM_ID, self)
+            if OkNum and Num then
+                Have = tonumber(Num) or 0
             end
-        end, false)
+        end
+        if Have < 99999 then
+            VIM:AddVirtualItem(self, TEST_COIN_ITEM_ID, 99999 - Have)
+            ugcprint("[初始装备] 测试币补足至 99999（已有 " .. Have .. "）")
+        else
+            ugcprint("[初始装备] 测试币已足够：" .. Have)
+        end
+    end
+    GiveTestCurrency(1)
+    local alreadyOwned = GetItemCount(PC, COPPER_PICKAXE_ITEM_ID)
+    if alreadyOwned > 0 then
+        ugcprint("[初始装备] 已拥有铜镐，跳过发放")
+        return
+    end
+    UGCBackpackSystemV2.AddItemV2(PC, COPPER_PICKAXE_ITEM_ID, 1)
+    ugcprint("[初始装备] 发放完成：金币1000 + 铜镐")
+        end
+        -- 背包等级恢复：以官方持久容量反推（解决重进恢复一级）
+        self.BackpackLevel = GetBackpackLevelFromCapacity(GetBackpackCapacity(self))
+        ugcprint("[背包等级] 恢复为 Lv" .. tostring(self.BackpackLevel) .. " 容量=" .. tostring(GetBackpackCapacity(self)))
+        local OkMaxCap, MaxCap = pcall(UGCBackpackSystemV2.GetMaxCellCapacity, self)
+        ugcprint("[背包] 容量上限=" .. tostring(OkMaxCap and MaxCap) .. "（永久目标 240）")
+        TryGiveStarterKit(self, 1)
+        self:BindShopV2Gift(1)
     end
 
     -- 商店模板V2：通过 AddToViewport 添加"打开商城"调试按钮
@@ -1019,8 +1130,26 @@ function UGCPlayerController:ReceiveBeginPlay()
             end
         end, false)
     end
-end
 
+    -- 悬浮按钮（使用 WBP_RechargeFloatingBtn）
+    if not UGCGameSystem.IsServer() then
+        UGCTimerUtility.CreateLuaTimer(1.0, function()
+            if not UGCObjectUtility.IsObjectValid(self) then return end
+            local widgetPath = UGCGameSystem.GetUGCResourcesFullPath("Asset/Blueprint/Prefabs/UI/WBP_RechargeFloatingBtn.WBP_RechargeFloatingBtn_C")
+            if not widgetPath or widgetPath == "" then
+                ugcprint("[Recharge] WBP_RechargeFloatingBtn path not found")
+                return
+            end
+            UGCWidgetManagerSystem.CreateWidgetAsync(widgetPath, function(Widget)
+                if Widget and UGCObjectUtility.IsObjectValid(self) then
+                    self.RechargeFloatingBtn = Widget
+                    UGCWidgetManagerSystem.AddToSlot(Widget, "UI.UISlot.MainUISlot_High")
+                    ugcprint("[Recharge] FloatingBtn created")
+                end
+            end)
+        end, false)
+    end
+end
 --- 开局发放铜镐（Mine_03 逻辑；ItemID = 8310026）
 function UGCPlayerController:GiveInitialCopperPickaxe()
     if not UGCGameSystem.IsServer() then
@@ -1746,18 +1875,18 @@ function UGCPlayerController:Server_TeleportToMineZone(ZoneId)
         )
         return
     end
-    if GetGoldCount(self) < MINE_TELEPORT_COST then
-        ugcprint("[MineTeleport] ❌ 金币不足: " .. tostring(GetGoldCount(self)))
-        UnrealNetwork.CallUnrealRPC(
-            self, self, "Client_MineTeleportNotify",
-            "金币不足，传送需要 " .. tostring(MINE_TELEPORT_COST)
-        )
-        return
-    end
-    if not TryRemoveGold(self, MINE_TELEPORT_COST) then
-        ugcprint("[MineTeleport] ❌ 扣费失败")
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportNotify", "扣费失败")
-        return
+    if not self.bTeleportVIP then
+        if GetGoldCount(self) < MINE_TELEPORT_COST then
+            UnrealNetwork.CallUnrealRPC(
+                self, self, "Client_MineTeleportNotify",
+                "金币不足，传送需要 " .. tostring(MINE_TELEPORT_COST)
+            )
+            return
+        end
+        if not TryRemoveGold(self, MINE_TELEPORT_COST) then
+            UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleportNotify", "扣费失败")
+            return
+        end
     end
     ugcprint(string.format("[MineTeleport] ⚡ 传送至 %s (%.0f,%.0f,%.0f)",
         Zone.Name, Zone.PadX, Zone.PadY, Zone.PadZ))
@@ -2514,18 +2643,22 @@ function UGCPlayerController:Server_StartSmelt(Slot, ItemId, Count)
         UnrealNetwork.CallUnrealRPC(self, self, "Client_SmeltNotify", "粗矿数量不足")
         return
     end
-    if GetItemCount(self, CoalId) < Count then
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_SmeltNotify", "煤矿不足（1 粗矿需 1 煤矿）")
-        return
+    if not self.bInfiniteFuel then
+        if GetItemCount(self, CoalId) < Count then
+            UnrealNetwork.CallUnrealRPC(self, self, "Client_SmeltNotify", "煤矿不足（1 粗矿需 1 煤矿）")
+            return
+        end
     end
     if not TryRemoveItems(self, ItemId, Count) then
         UnrealNetwork.CallUnrealRPC(self, self, "Client_SmeltNotify", "扣除粗矿失败")
         return
     end
-    if not TryRemoveItems(self, CoalId, Count) then
-        TryAddItems(self, ItemId, Count)
-        UnrealNetwork.CallUnrealRPC(self, self, "Client_SmeltNotify", "扣除煤矿失败，已退回粗矿")
-        return
+    if not self.bInfiniteFuel then
+        if not TryRemoveItems(self, CoalId, Count) then
+            TryAddItems(self, ItemId, Count)
+            UnrealNetwork.CallUnrealRPC(self, self, "Client_SmeltNotify", "扣除煤矿失败，已退回粗矿")
+            return
+        end
     end
 
     SlotData.State = SMELT_STATE_RUNNING
@@ -3867,11 +4000,7 @@ function UGCPlayerController:GetAvailableServerRPCs()
         "Server_UnlockMineTeleport", "Server_TeleportToMineZone", "Server_ReturnToSpawn",
         "Server_UnlockSmeltingPlant", "Server_UpgradeSmeltingPlant", "Server_UnlockFurnace",
         "Server_StartSmelt", "Server_SkipSmelt", "Server_CollectSmelt",
-        "Server_UnlockTalentMarket", "Server_HireTalentWorker", "Server_CollectTalentJob",
-        "Server_BeginMineCarTrip", "Server_EndMineCarTrip", "Server_UnlockVehicleRepair",
-        "Server_CheckVehicleReturn", "Server_RepairMiningVehicle", "Server_RepairVehicle",
-        "Server_RecycleOre", "Server_UpgradeWarehouse", "Server_BuyTool", "Server_UpgradeBackpack",
-        "Server_PaymentGiveItem", "Server_PaymentUpgradeBackpack"
+        "Server_RecycleOre","Server_UpgradeWarehouse","Server_BuyTool","Server_UpgradeBackpack","Server_QueryBackpackLevel"
 end
 
 function UGCPlayerController:GetAvailableClientRPCs()
@@ -3888,8 +4017,7 @@ function UGCPlayerController:GetAvailableClientRPCs()
         "Client_VehicleRepairNotify", "Client_VehicleRepairUnlocked", "Client_VehicleRepairState", "Client_ForceStopMineCarMode",
         "Client_OreRecycleNotify",
         "Client_WarehouseNotify",
-        "Client_ShopNotify",
-        "Client_PaymentNotify"
+        "Client_ShopNotify","Client_BackpackLevelSync"
 end
 
 -- ============ 矿工百货商店 RPC ============
@@ -3946,16 +4074,56 @@ function UGCPlayerController:Server_BuyTool(ToolIndex)
         "购买成功！获得 " .. tool.Name .. "（消耗 " .. tool.Cost .. " 金）")
 end
 
+-- 唯一服务端写入入口：所有背包等级/容量修改都必须经过 ApplyBackpackLevel
+function UGCPlayerController:ApplyBackpackLevel(TargetLevel)
+    if not UGCGameSystem.IsServer() then
+        return false
+    end
+    if not ShopConfig or not ShopConfig.GetBackpackLevel or not ShopConfig.GetMaxBackpackLevel then
+        return false
+    end
+    TargetLevel = math.floor(tonumber(TargetLevel) or 1)
+    local MaxLevel = ShopConfig.GetMaxBackpackLevel()
+    TargetLevel = math.max(1, math.min(TargetLevel, MaxLevel))
+    local CurLevel = math.floor(tonumber(self.BackpackLevel) or 1)
+    if TargetLevel <= CurLevel then
+        return false
+    end
+    local TargetCfg = ShopConfig.GetBackpackLevel(TargetLevel)
+    if not TargetCfg or not TargetCfg.Slots then
+        return false
+    end
+
+    -- 先保证容量上限足够，再补齐到目标等级对应的格子数
+    if UGCBackpackSystemV2 and UGCBackpackSystemV2.GetMaxCellCapacity and UGCBackpackSystemV2.AddMaxCellCapacity then
+        local OkM, MaxCap = pcall(UGCBackpackSystemV2.GetMaxCellCapacity, self)
+        if OkM and MaxCap and tonumber(MaxCap) < TargetCfg.Slots then
+            pcall(UGCBackpackSystemV2.AddMaxCellCapacity, self, TargetCfg.Slots - tonumber(MaxCap))
+            ugcprint("[背包] 容量上限提升至 " .. tostring(TargetCfg.Slots))
+        end
+    end
+
+    if UGCBackpackSystemV2 and UGCBackpackSystemV2.AddCellCapacity then
+        local CurCap = GetBackpackCapacity(self)
+        local Delta = TargetCfg.Slots - CurCap
+        if Delta > 0 then
+            local Ok = pcall(UGCBackpackSystemV2.AddCellCapacity, self, Delta)
+            ugcprint("[背包] 扩容 " .. tostring(Delta) .. " 格 ok=" .. tostring(Ok) .. " 当前容量=" .. tostring(GetBackpackCapacity(self)))
+        end
+    end
+
+    self.BackpackLevel = TargetLevel
+    InvokeClient(self, "Client_BackpackLevelSync", TargetLevel, GetBackpackCapacity(self))
+    ugcprint("[背包] 等级变更 Lv" .. tostring(CurLevel) .. " -> Lv" .. tostring(TargetLevel))
+    return true
+end
+
 -- 服务端：升级背包
 function UGCPlayerController:Server_UpgradeBackpack()
     if not UGCGameSystem.IsServer() then return end
 
-    -- 1. 初始化背包等级
-    if not self.BackpackLevel then
-        self.BackpackLevel = 1
-    end
-
-    local curLevel = self.BackpackLevel
+    -- 1. 使用服务端唯一权威等级，不再反推容量
+    local curLevel = math.floor(tonumber(self.BackpackLevel) or 1)
     local maxLevel = ShopConfig.GetMaxBackpackLevel()
 
     -- 2. 检查是否满级
@@ -3982,23 +4150,37 @@ function UGCPlayerController:Server_UpgradeBackpack()
     -- 4. 扣金币
     UGCBackpackSystemV2.RemoveItemV2(self, ShopConfig.GoldItemId, nextCfg.Cost)
 
-    -- 5. 增加背包格数
-    --    UGCBackpackSystemV2 提供 AddBackpackCapacity 或 SetBackpackMaxSize
-    --    当前仓库用到 AddWarehouseCellCapacity，背包应类似
-    local addSlots = nextCfg.Slots - (ShopConfig.GetBackpackLevel(curLevel) and ShopConfig.GetBackpackLevel(curLevel).Slots or 10)
-    if UGCBackpackSystemV2.AddCellCapacity then
-        pcall(UGCBackpackSystemV2.AddCellCapacity, self, addSlots)
+    -- 5. 统一走唯一服务端写入入口
+    local Ok = self:ApplyBackpackLevel(nextLevel)
+    if not Ok then
+        ugcprint("[背包] ApplyBackpackLevel 失败，退回升级金币")
+        if UGCBackpackSystemV2 and UGCBackpackSystemV2.AddItemV2 then
+            pcall(UGCBackpackSystemV2.AddItemV2, self, ShopConfig.GoldItemId, nextCfg.Cost)
+        end
+        return
     end
 
-    -- 6. 更新等级
-    self.BackpackLevel = nextLevel
-
-    -- 7. 通知客户端
+    -- 6. 通知客户端
     InvokeClient(self, "Client_ShopNotify",
         "背包升级成功！" .. curLevel .. "级 → " .. nextLevel .. "级（" .. nextCfg.Slots .. "格，消耗 " .. nextCfg.Cost .. " 金）")
 end
 
 -- 客户端：收到商店通知
+-- 客户端向服务端查询当前背包等级（Minershop 打开时调用，解决 BackpackLevel 不复制导致的显示脱节）
+function UGCPlayerController:Server_QueryBackpackLevel()
+    if not UGCGameSystem.IsServer() then return end
+    local Lv = math.floor(tonumber(self.BackpackLevel) or 1)
+    self.BackpackLevel = Lv
+    InvokeClient(self, "Client_BackpackLevelSync", Lv, GetBackpackCapacity(self))
+end
+
+function UGCPlayerController:Client_BackpackLevelSync(Level, Capacity)
+    self.BackpackLevel = tonumber(Level) or 1
+    if self.OnBackpackLevelSynced then
+        pcall(self.OnBackpackLevelSynced, self.BackpackLevel, Capacity)
+    end
+end
+
 function UGCPlayerController:Client_ShopNotify(Msg)
     Msg = tostring(Msg or "")
     print("[Shop] " .. Msg)
@@ -4008,11 +4190,220 @@ function UGCPlayerController:Client_ShopNotify(Msg)
     end
 end
 
-function UGCPlayerController:GetReplicatedProperties()
-    return "bJadeShopUnlocked", "bMineTeleportUnlocked",
-        "bTalentMarketUnlocked", "bVehicleRepairUnlocked",
-        "bSmelterUnlocked", "SmelterPlantLevel", "UnlockedFurnaceCount",
-        "BackpackLevel"
+-- ============ ShopV2 悬浮商店礼包发放（服务端） ============
+
+function UGCPlayerController:GetShopItemName(ItemId)
+    ItemId = tonumber(ItemId) or 0
+    if ShopConfig and ShopConfig.Tools then
+        for _, Tool in pairs(ShopConfig.Tools) do
+            if Tool.ItemId == ItemId then
+                return Tool.Name
+            end
+        end
+    end
+    if OreRecycleConfig and OreRecycleConfig.GetName then
+        local Name = OreRecycleConfig.GetName(ItemId)
+        if Name and Name ~= "?" then
+            return Name
+        end
+    end
+    if ItemId == JADE_ITEM_ID then
+        return "玉矿石"
+    end
+    return tostring(ItemId)
+end
+
+function UGCPlayerController:GiveRandomOres(Count)
+    Count = math.floor(tonumber(Count) or 0)
+    if Count <= 0 then
+        return
+    end
+    local Pool = OreRecycleConfig and OreRecycleConfig.ItemOrder
+    if not Pool or #Pool == 0 then
+        return
+    end
+    local Added = 0
+    for _ = 1, Count do
+        local Idx = math.random(#Pool)
+        local OkAdd, AddRet = pcall(UGCBackpackSystemV2.AddItemV2, self, Pool[Idx], 1)
+        if OkAdd and (AddRet == nil or (tonumber(AddRet) or 0) >= 1) then
+            Added = Added + 1
+        end
+    end
+    ugcprint("[商店礼包] 随机矿物实发 " .. Added .. "/" .. Count)
+    if UGCItemSystemV2 and UGCItemSystemV2.GetItemMaxNumberOfStacksV2 and Pool and Pool[1] then
+        local OkS, Stack = pcall(UGCItemSystemV2.GetItemMaxNumberOfStacksV2, Pool[1])
+        ugcprint("[商店礼包] 矿物 " .. tostring(Pool[1]) .. " 最大堆叠=" .. tostring(Stack))
+    end
+    ugcprint("[商店礼包] 随机矿物实发 " .. Added .. "/" .. Count)
+    if Added < Count then
+        InvokeClient(self, "Client_ShopNotify", "背包空间不足，随机矿物只发放 " .. Added .. " 个")
+    end
+end
+
+function UGCPlayerController:UpgradeBackpackTo(TargetLevel)
+    TargetLevel = math.floor(tonumber(TargetLevel) or 1)
+    if not ShopConfig then
+        return false
+    end
+    local MaxLevel = ShopConfig.GetMaxBackpackLevel()
+    TargetLevel = math.min(TargetLevel, MaxLevel)
+    local Ok = self:ApplyBackpackLevel(TargetLevel)
+    if Ok then
+        ugcprint("[商店礼包] 背包升级至 Lv" .. tostring(TargetLevel))
+    end
+    return Ok
+end
+
+function UGCPlayerController:GiveShopGift(Gift, Num)
+    if not Gift then
+        return
+    end
+    Num = math.max(1, math.floor(tonumber(Num) or 1))
+    local Parts = {}
+
+    if Gift.Items then
+        for _, ItemInfo in ipairs(Gift.Items) do
+            local ItemId = ItemInfo[1]
+            local ItemNum = (ItemInfo[2] or 1) * Num
+            local OkAdd, AddRet = pcall(UGCBackpackSystemV2.AddItemV2, self, ItemId, ItemNum)
+            local RealNum = (OkAdd and AddRet ~= nil) and (tonumber(AddRet) or ItemNum) or 0
+            if RealNum < ItemNum then
+                InvokeClient(self, "Client_ShopNotify", "背包空间不足：" .. self:GetShopItemName(ItemId) .. " 只发放 " .. RealNum .. " 个")
+            end
+            table.insert(Parts, tostring(RealNum) .. "x" .. self:GetShopItemName(ItemId))
+        end
+    end
+
+    if Gift.JadeCount and Gift.JadeCount > 0 then
+        local JadeNum = Gift.JadeCount * Num
+        local OkAdd, AddRet = pcall(UGCBackpackSystemV2.AddItemV2, self, JADE_ITEM_ID, JadeNum)
+        local RealJade = (OkAdd and AddRet ~= nil) and (tonumber(AddRet) or JadeNum) or 0
+        if RealJade < JadeNum then
+            InvokeClient(self, "Client_ShopNotify", "背包空间不足：玉矿石只发放 " .. RealJade .. " 个")
+        end
+        table.insert(Parts, tostring(RealJade) .. "x玉矿石")
+        if UGCItemSystemV2 and UGCItemSystemV2.GetItemMaxNumberOfStacksV2 then
+            local OkS, Stack = pcall(UGCItemSystemV2.GetItemMaxNumberOfStacksV2, JADE_ITEM_ID)
+            ugcprint("[商店礼包] 玉矿石(8310011) 最大堆叠=" .. tostring(Stack))
+        end
+        table.insert(Parts, tostring(RealJade) .. "x玉矿石")
+    end
+
+    if Gift.RandomOreCount and Gift.RandomOreCount > 0 then
+        self:GiveRandomOres(Gift.RandomOreCount * Num)
+        table.insert(Parts, "随机矿物x" .. tostring(Gift.RandomOreCount * Num))
+    end
+
+    if Gift.BackpackLevel and Gift.BackpackLevel > 0 then
+        local OkLv = self:UpgradeBackpackTo(Gift.BackpackLevel)
+        if OkLv then
+            table.insert(Parts, "背包Lv" .. tostring(Gift.BackpackLevel))
+        end
+    end
+
+    if Gift.Flag then
+        self[Gift.Flag] = true
+        if Gift.Flag == "bAutoPickup" then
+            self:StartAutoPickup()
+        end
+        self[Gift.Flag] = true
+    end
+
+    local Msg = "获得" .. Gift.Name
+    if #Parts > 0 then
+        Msg = Msg .. "：" .. table.concat(Parts, " + ")
+    end
+    ugcprint("[商店礼包] " .. Msg)
+    InvokeClient(self, "Client_ShopNotify", Msg)
+end
+
+-- 自动拾取：服务端定时检测附近拾取物并自动入包（官方 API 组合）
+local AUTO_PICKUP_RANGE = 200
+function UGCPlayerController:StartAutoPickup()
+    if self._bAutoPickupRunning then return end
+    self._bAutoPickupRunning = true
+    ugcprint("[自动拾取] 已开启（范围 " .. AUTO_PICKUP_RANGE .. "）")
+    self:TickAutoPickup()
+end
+
+function UGCPlayerController:StopAutoPickup()
+    self._bAutoPickupRunning = false
+    ugcprint("[自动拾取] 已关闭")
+end
+
+function UGCPlayerController:TickAutoPickup()
+    if not self._bAutoPickupRunning then return end
+    if not self.bAutoPickup or not UGCObjectUtility.IsObjectValid(self) then
+        self:StopAutoPickup()
+        return
+    end
+    local Pawn = self:GetPawn()
+    if Pawn and UGCItemSystemV2 and UGCItemSystemV2.FindPickupWrapperActorByRange and UGCItemSystemV2.TryPickupWrapperItem then
+        local OkPos, Pos = pcall(function() return Pawn:GetActorLocation() end)
+        if OkPos and Pos then
+            local OkList, Wrappers = pcall(UGCItemSystemV2.FindPickupWrapperActorByRange, Pos, AUTO_PICKUP_RANGE)
+            if OkList and type(Wrappers) == "table" then
+                for _, W in ipairs(Wrappers) do
+                    pcall(UGCItemSystemV2.TryPickupWrapperItem, Pawn, W, nil, nil, true)
+                end
+            end
+        end
+    end
+    if UGCTimerUtility and UGCTimerUtility.CreateLuaTimer then
+        UGCTimerUtility.CreateLuaTimer(0.5, function()
+            if UGCObjectUtility.IsObjectValid(self) and self._bAutoPickupRunning then
+                self:TickAutoPickup()
+            end
+        end, false)
+    end
+end
+
+function UGCPlayerController:OnShopV2ItemAdded(Result)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    if not Result or Result.bSucceeded == false then
+        return
+    end
+    if not Result.ItemList then
+        return
+    end
+    for ItemID, Num in pairs(Result.ItemList) do
+        local Gift = ShopV2ProductConfig and ShopV2ProductConfig.GetGift(ItemID)
+        if Gift then
+            self:GiveShopGift(Gift, Num)
+        end
+    end
+end
+
+function UGCPlayerController:BindShopV2Gift(Attempt)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    if not UGCObjectUtility.IsObjectValid(self) then
+        return
+    end
+    if self._bShopV2GiftBinded then
+        return
+    end
+    if UGCGamePartSystem and UGCGamePartSystem.VirtualItemManager then
+        local VIM = UGCGamePartSystem.VirtualItemManager.GetGlobalActor()
+        if VIM and VIM.AddItemResultDelegate then
+            VIM.AddItemResultDelegate:Add(self.OnShopV2ItemAdded, self)
+            self._bShopV2GiftBinded = true
+            ugcprint("[商店礼包] 服务端监听 AddItemResultDelegate 成功")
+            return
+        end
+    end
+    Attempt = math.floor(tonumber(Attempt) or 1)
+    if Attempt < 15 then
+        UGCTimerUtility.CreateLuaTimer(1.0, function()
+            if UGCObjectUtility.IsObjectValid(self) then
+                self:BindShopV2Gift(Attempt + 1)
+            end
+        end, false)
+    end
 end
 
 -- ============ 付费/商业化 RPC ============
@@ -4144,3 +4535,5 @@ function UGCPlayerController:Client_PaymentNotify(Msg)
 end
 
 return UGCPlayerController
+
+

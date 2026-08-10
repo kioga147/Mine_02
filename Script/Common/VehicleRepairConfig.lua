@@ -10,18 +10,21 @@ local VehicleRepairConfig = {
             Name = "初级采矿车",
             RangeText = "3x3",
             MineLevel = 2,
+            SkillPath = "Asset/Blueprint/Prefabs/Skills/BasicVehicle.BasicVehicle_C",
         },
         [2] = {
             ItemId = 8310024,
             Name = "中级采矿车",
             RangeText = "5x5",
             MineLevel = 4,
+            SkillPath = "Asset/Blueprint/Prefabs/Skills/MidVehicle.MidVehicle_C",
         },
         [3] = {
             ItemId = 8310023,
             Name = "高级采矿车",
             RangeText = "7x7",
             MineLevel = 5,
+            SkillPath = "Asset/Blueprint/Prefabs/Skills/MaxVehicle.MaxVehicle_C",
         },
     },
 }

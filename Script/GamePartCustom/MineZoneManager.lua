@@ -535,4 +535,16 @@ function MineZoneManager.GetZoneIdByActor(Actor)
     return nil, nil
 end
 
+function MineZoneManager.GetAllOreActors()
+    local actors = {}
+    for zoneId, entries in pairs(ZONE_ACTORS) do
+        for _, entry in ipairs(entries) do
+            if entry.Actor and UGCObjectUtility and UGCObjectUtility.IsObjectValid(entry.Actor) then
+                table.insert(actors, entry.Actor)
+            end
+        end
+    end
+    return actors
+end
+
 return MineZoneManager

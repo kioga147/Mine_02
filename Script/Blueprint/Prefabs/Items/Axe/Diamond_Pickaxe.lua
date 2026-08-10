@@ -2,6 +2,16 @@
 --Edit Below--
 local Diamond_Pickaxe = {} 
 
+local MineCarItemHelper = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire("Script.Common.MineCarItemHelper")
+    end)
+    if Ok and type(Mod) == "table" then
+        MineCarItemHelper = Mod
+    end
+end
+
 --[[经典背包事件]]--
 --[[
 --- func 处理物品的拾取(服务端生效)
@@ -160,5 +170,19 @@ local Diamond_Pickaxe = {}
 -- end
 ]]--
 
+
+function Diamond_Pickaxe:OnEquip()
+    Diamond_Pickaxe.SuperClass.OnEquip(self)
+    if MineCarItemHelper then
+        MineCarItemHelper.SwitchToMeleeItemByHandle(self, 8310022)
+    end
+end
+
+function Diamond_Pickaxe:OnUseV2()
+    Diamond_Pickaxe.SuperClass.OnUseV2(self)
+    if MineCarItemHelper then
+        MineCarItemHelper.SwitchToMeleeItemByHandle(self, 8310022)
+    end
+end
 
 return Diamond_Pickaxe

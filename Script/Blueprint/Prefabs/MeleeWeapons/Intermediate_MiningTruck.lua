@@ -2,22 +2,23 @@
 --Edit Below--
 local Intermediate_MiningTruck = {}
 local VEHICLE_REPAIR_ID = 2
+local MELEE_WEAPON_SLOT = 4
 
 local function GetPlayerPawnFromWeapon(Weapon)
     local Owner = Weapon:GetOwner()
-    
+
     if Owner then
         if Owner.SetMineCarMode then
             return Owner
         end
-        
+
         if Owner.GetOwner then
             local Parent = Owner:GetOwner()
             if Parent and Parent.SetMineCarMode then
                 return Parent
             end
         end
-        
+
         if Owner.GetController then
             local Controller = Owner:GetController()
             if Controller and UGCGameSystem and UGCGameSystem.GetPlayerPawnByPlayerController then
@@ -28,7 +29,7 @@ local function GetPlayerPawnFromWeapon(Weapon)
             end
         end
     end
-    
+
     if UGCGameSystem and UGCGameSystem.GetAllPlayerPawns then
         local Pawns = UGCGameSystem.GetAllPlayerPawns()
         for _, Pawn in ipairs(Pawns) do
@@ -37,7 +38,7 @@ local function GetPlayerPawnFromWeapon(Weapon)
             end
         end
     end
-    
+
     return nil
 end
 
@@ -127,6 +128,24 @@ local function RequestEndTrip(PlayerPawn)
     end
 end
 
+local function GetWeaponName(Weapon)
+    local Name = ""
+    if Weapon and Weapon.GetName then
+        local NameOk, Result = pcall(function()
+            return Weapon:GetName()
+        end)
+        if NameOk and Result ~= nil then
+            Name = tostring(Result)
+        end
+    end
+    return Name
+end
+
+local function IsWeaponMineCarByName(Weapon)
+    local Name = GetWeaponName(Weapon)
+    return string.find(Name, "MiningVehicle") ~= nil or string.find(Name, "MiningTruck") ~= nil
+end
+
 local function IsCurrentWeaponMineCar(PlayerPawn)
     if PlayerPawn == nil or UGCWeaponManagerSystem == nil or UGCWeaponManagerSystem.GetCurrentWeapon == nil then
         return false
@@ -135,55 +154,60 @@ local function IsCurrentWeaponMineCar(PlayerPawn)
     if not Ok or Weapon == nil then
         return false
     end
-    local Name = ""
-    if Weapon.GetName then
-        local NameOk, Result = pcall(function()
-            return Weapon:GetName()
-        end)
-        if NameOk and Result ~= nil then
-            Name = tostring(Result)
+    return IsWeaponMineCarByName(Weapon)
+end
+
+local function IsMineCarInHand(PlayerPawn)
+    if PlayerPawn == nil or UGCWeaponManagerSystem == nil then
+        return false
+    end
+
+    -- 优先用当前手持槽判断，切换完成后槽位就是 SWPS_MeleeWeapon
+    if UGCWeaponManagerSystem.GetCurrentWeaponSlot then
+        local Ok, Slot = pcall(UGCWeaponManagerSystem.GetCurrentWeaponSlot, PlayerPawn)
+        local SlotNum = Ok and math.floor(tonumber(Slot) or -1) or -1
+        local SlotStr = Ok and tostring(Slot or "") or ""
+        if SlotNum == MELEE_WEAPON_SLOT or string.find(SlotStr, "Melee") ~= nil then
+            if UGCWeaponManagerSystem.GetWeaponBySlot then
+                local OkW, SlotWeapon = pcall(UGCWeaponManagerSystem.GetWeaponBySlot, PlayerPawn, MELEE_WEAPON_SLOT)
+                if OkW and SlotWeapon then
+                    return IsWeaponMineCarByName(SlotWeapon)
+                end
+            end
+            return IsCurrentWeaponMineCar(PlayerPawn)
         end
     end
-    return string.find(Name, "MiningVehicle") ~= nil or string.find(Name, "MiningTruck") ~= nil
+
+    return IsCurrentWeaponMineCar(PlayerPawn)
 end
 
 function Intermediate_MiningTruck:ReceiveBeginPlay()
     Intermediate_MiningTruck.SuperClass.ReceiveBeginPlay(self)
-    
+
+    ugcprint("[矿车武器] ==================== 中级采矿车武器开始 ====================")
+
     local PlayerPawn = GetPlayerPawnFromWeapon(self)
-    if PlayerPawn then
-        if IsVehicleBroken(PlayerPawn) then
-            StopMineCarVisual(PlayerPawn)
-            AttachCurrentWeaponToBack(PlayerPawn)
-            NotifyRepairRequired(PlayerPawn)
-            ugcprint("[MineCarTrip] intermediate vehicle blocked by repair state")
-            return
-        end
-        RequestBeginTrip(PlayerPawn)
+    if not PlayerPawn then
+        ugcprint("[矿车武器] ❌ 无法获取玩家Pawn")
         return
     end
-    
-    if PlayerPawn and PlayerPawn.SetMineCarMode then
-        if IsVehicleBroken(PlayerPawn) then
-            ugcprint("[矿车武器] 中级采矿车已损坏，阻止激活矿车模式")
-            return
-        end
-        UGCAttributeSystem.SetGameAttributeValue(PlayerPawn, "AxeLevel", 4)
-        
-        if PlayerPawn.IsMineCarMode and PlayerPawn:IsMineCarMode() then
-            return
-        end
-        
-        PlayerPawn:SetMineCarMode(true)
-        
-        if UGCTimerManagerSystem and UGCTimerManagerSystem.SetTimer then
-            UGCTimerManagerSystem.SetTimer(function()
-                self:AddMineCarSkill(PlayerPawn)
-            end, 1.5, false)
-        else
-            self:AddMineCarSkill(PlayerPawn)
-        end
+
+    if IsVehicleBroken(PlayerPawn) then
+        StopMineCarVisual(PlayerPawn)
+        AttachCurrentWeaponToBack(PlayerPawn)
+        NotifyRepairRequired(PlayerPawn)
+        ugcprint("[矿车武器] 中级采矿车已损坏，阻止激活矿车模式")
+        return
     end
+
+    -- 变身由物品OnEquip在服务器端触发，武器端只负责补技能
+    if PlayerPawn.IsMineCarMode and PlayerPawn:IsMineCarMode() then
+        self:AddMineCarSkill(PlayerPawn)
+    else
+        ugcprint("[矿车武器] 等待物品OnEquip触发变身")
+    end
+
+    ugcprint("[矿车武器] ==================== 中级采矿车武器结束 ====================")
 end
 
 function Intermediate_MiningTruck:AddMineCarSkill(PlayerPawn)
@@ -192,7 +216,7 @@ function Intermediate_MiningTruck:AddMineCarSkill(PlayerPawn)
         "/Game/Mine_02/Asset/Blueprint/Prefabs/Skills/MidVehicle.MidVehicle_C",
         UGCGameSystem.GetUGCResourcesFullPath('Asset/Blueprint/Prefabs/Skills/MidVehicle.MidVehicle_C')
     }
-    
+
     local SkillClass = nil
     for _, Path in ipairs(SkillPaths) do
         SkillClass = UGCObjectUtility.LoadClass(Path)
@@ -200,10 +224,10 @@ function Intermediate_MiningTruck:AddMineCarSkill(PlayerPawn)
             break
         end
     end
-    
+
     if SkillClass then
         local ExistSkills = UGCPersistEffectSystem.GetSkillsByClass(PlayerPawn, SkillClass)
-        
+
         if #ExistSkills == 0 then
             local Skill = UGCPersistEffectSystem.AddSkillByClass(PlayerPawn, SkillClass, -1)
             if not Skill then
@@ -219,29 +243,54 @@ function Intermediate_MiningTruck:AddMineCarSkill(PlayerPawn)
 end
 
 function Intermediate_MiningTruck:ReceiveEndPlay()
-    Intermediate_MiningTruck.SuperClass.ReceiveEndPlay(self) 
-    
+    Intermediate_MiningTruck.SuperClass.ReceiveEndPlay(self)
+
+    ugcprint("[矿车武器] ==================== 中级采矿车武器销毁 ====================")
+
     local PlayerPawn = GetPlayerPawnFromWeapon(self)
-    if PlayerPawn then
-        local function EndTripIfSwitchedAway()
-            if PlayerPawn.IsMineCarMode and PlayerPawn:IsMineCarMode() and not IsCurrentWeaponMineCar(PlayerPawn) then
-                ugcprint("[MineCarTrip] intermediate weapon EndPlay confirmed switch away; ending trip")
-                RequestEndTrip(PlayerPawn)
-            else
-                ugcprint("[MineCarTrip] intermediate weapon EndPlay kept trip; current weapon is still mine car")
-            end
-        end
-        if UGCTimerUtility and UGCTimerUtility.CreateLuaTimer then
-            UGCTimerUtility.CreateLuaTimer(0.3, EndTripIfSwitchedAway, false)
-        else
-            EndTripIfSwitchedAway()
-        end
+    if not PlayerPawn then
+        ugcprint("[矿车武器] ❌ 无法获取玩家Pawn")
         return
     end
-    
-    if PlayerPawn and PlayerPawn.SetMineCarMode then
-        PlayerPawn:SetMineCarMode(false)
+
+    -- 武器销毁时清理技能（DoSetMineCarMode也会清理，但双重保险）
+    if UGCPersistEffectSystem then
+        local SkillPaths = {
+            "Asset/Blueprint/Prefabs/Skills/MidVehicle.MidVehicle_C"
+        }
+        for _, SkillPath in ipairs(SkillPaths) do
+            local FullPath = UGCGameSystem.GetUGCResourcesFullPath(SkillPath)
+            local SkillClass = UGCObjectUtility.LoadClass(FullPath)
+            if SkillClass then
+                local ExistSkills = UGCPersistEffectSystem.GetSkillsByClass(PlayerPawn, SkillClass)
+                if ExistSkills and #ExistSkills > 0 then
+                    for _, SkillInst in ipairs(ExistSkills) do
+                        if UE.IsValid(SkillInst) then
+                            UGCPersistEffectSystem.RemoveSkillInstance(PlayerPawn, SkillInst)
+                            ugcprint("[矿车武器] ✅ 已移除MidVehicle技能实例")
+                        end
+                    end
+                end
+            end
+        end
     end
+
+    -- 武器销毁不再直接取消矿车模式，由物品OnUnEquip通过服务器处理
+    local function EndTripIfSwitchedAway()
+        if PlayerPawn.IsMineCarMode and PlayerPawn:IsMineCarMode() and not IsMineCarInHand(PlayerPawn) then
+            ugcprint("[MineCarTrip] 切换武器离开矿车，请求结束行程")
+            RequestEndTrip(PlayerPawn)
+        else
+            ugcprint("[MineCarTrip] 矿车武器销毁，等待服务器处理")
+        end
+    end
+    if UGCTimerUtility and UGCTimerUtility.CreateLuaTimer then
+        UGCTimerUtility.CreateLuaTimer(0.3, EndTripIfSwitchedAway, false)
+    else
+        EndTripIfSwitchedAway()
+    end
+
+    ugcprint("[矿车武器] ==================== 中级采矿车武器销毁结束 ====================")
 end
 
 function Intermediate_MiningTruck:GetReplicatedProperties()

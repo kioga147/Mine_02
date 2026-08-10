@@ -1,6 +1,114 @@
 ---@class BP_BackpackComponentV2_Custom_C:BP_BackpackComponentV2_C
 --Edit Below--
-local BP_BackpackComponentV2_Custom = {} 
+local BP_BackpackComponentV2_Custom = {}
+
+local MELEE_SLOT_NAME = "EquipmentSlot.Core.MeleeSlot"
+local MELEE_WEAPON_SLOT = 4
+local MINE_CAR_ITEM_IDS = {
+    [8310025] = true,
+    [8310024] = true,
+    [8310023] = true,
+}
+
+local MiningSystem = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire("Script.GamePartCustom.MiningSystem")
+    end)
+    if Ok and type(Mod) == "table" then
+        MiningSystem = Mod
+    end
+end
+
+local function GetItemIdFromDefineID(ItemDefineID)
+    if ItemDefineID == nil then
+        return 0
+    end
+    local Ok, Id = pcall(function()
+        return ItemDefineID.TypeSpecificID
+    end)
+    if Ok and Id ~= nil then
+        return math.floor(tonumber(Id) or 0)
+    end
+    return 0
+end
+
+local function TryEquipUsedMeleeToHand(PC, ItemDefineID)
+    if PC == nil or ItemDefineID == nil then
+        return
+    end
+    local ItemId = GetItemIdFromDefineID(ItemDefineID)
+    if ItemId <= 0 or MINE_CAR_ITEM_IDS[ItemId] then
+        return
+    end
+    if MiningSystem == nil then
+        local Ok, Mod = pcall(function()
+            return UGCGameSystem.UGCRequire("Script.GamePartCustom.MiningSystem")
+        end)
+        if Ok and type(Mod) == "table" then
+            MiningSystem = Mod
+        end
+    end
+    if MiningSystem == nil or not MiningSystem.GetAxeLevelByItemID then
+        return
+    end
+    if MiningSystem.GetAxeLevelByItemID(ItemId) <= 0 then
+        return
+    end
+
+    local Pawn = nil
+    if PC.GetPawn then
+        local Ok, P = pcall(PC.GetPawn, PC)
+        if Ok then
+            Pawn = P
+        end
+    end
+    if Pawn == nil and UGCGameSystem and UGCGameSystem.GetPlayerPawnByPlayerController then
+        local Ok, P = pcall(UGCGameSystem.GetPlayerPawnByPlayerController, PC)
+        if Ok then
+            Pawn = P
+        end
+    end
+    if Pawn == nil or not (Pawn.IsMineCarMode and Pawn:IsMineCarMode()) then
+        return
+    end
+
+    local Ok, IDs = pcall(UGCBackpackSystemV2.GetItemDefineIDsByIDV2, PC, ItemId)
+    if not (Ok and IDs and #IDs > 0) then
+        return
+    end
+
+    ugcprint("[背包V2] 使用近战物品，切换武器并退出矿车模式")
+    pcall(UGCBackpackSystemV2.EquipItemV2, PC, MELEE_SLOT_NAME, IDs[1])
+    local function SwitchToMelee()
+        if Pawn and UE.IsValid(Pawn)
+            and UGCWeaponManagerSystem and UGCWeaponManagerSystem.SwitchWeaponBySlot then
+            pcall(UGCWeaponManagerSystem.SwitchWeaponBySlot, Pawn, MELEE_WEAPON_SLOT, true)
+        end
+    end
+    if UGCTimerUtility and UGCTimerUtility.CreateLuaTimer then
+        UGCTimerUtility.CreateLuaTimer(0.3, SwitchToMelee, false)
+        UGCTimerUtility.CreateLuaTimer(0.5, function()
+            if Pawn and UE.IsValid(Pawn) and Pawn.IsMineCarMode and Pawn:IsMineCarMode() then
+                ugcprint("[背包V2] 切回近战武器，退出矿车模式恢复人形")
+                if Pawn.SetMineCarMode then
+                    Pawn:SetMineCarMode(false)
+                elseif Pawn.DoSetMineCarMode then
+                    Pawn:DoSetMineCarMode(false)
+                end
+            end
+        end, false)
+    else
+        SwitchToMelee()
+        if Pawn and Pawn.IsMineCarMode and Pawn:IsMineCarMode() then
+            if Pawn.SetMineCarMode then
+                Pawn:SetMineCarMode(false)
+            elseif Pawn.DoSetMineCarMode then
+                Pawn:DoSetMineCarMode(false)
+            end
+        end
+    end
+end
 
 
 ---func 背包初始化函数，玩家登录后执行一次(服务端调用)
@@ -113,6 +221,7 @@ end
 ---@param ItemDefineID userdata 物品DefineID
 function BP_BackpackComponentV2_Custom:OnUseItemV2(ItemDefineID)
     BP_BackpackComponentV2_Custom.SuperClass.OnUseItemV2(self, ItemDefineID)
+    TryEquipUsedMeleeToHand(self:GetOwner(), ItemDefineID)
 end
 
 ---func 取消使用物品后回调(服务端调用) 装备/投掷物 取消使用/卸下。 注：药品不会触发此回调

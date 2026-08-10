@@ -38,8 +38,8 @@ MiningSystem.BombExpireTime = 0
 
 function MiningSystem.SetBombActive(bActive)
     if bActive then
-        MiningSystem.BombExpireTime = os.clock() + 3
-        ugcprint("[MiningSystem] 炸弹已激活，等级="..MiningSystem.BombLevel.."，持续3秒")
+        MiningSystem.BombExpireTime = os.clock() + 0.5
+        ugcprint("[MiningSystem] 炸弹已激活，等级="..MiningSystem.BombLevel.."，持续0.5秒")
     else
         MiningSystem.BombExpireTime = 0
         ugcprint("[MiningSystem] 炸弹已清除")
@@ -79,6 +79,45 @@ function MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
         return MiningSystem.BombLevel
     end
     
+    -- 首先检查是否在矿车模式中
+    local ownerPawn = nil
+    local function TryGetPawn(Actor)
+        if Actor and Actor.IsMineCarMode then
+            return Actor
+        end
+        return nil
+    end
+    
+    if DamageCauser.IsMineCarMode then
+        ownerPawn = DamageCauser
+    elseif DamageCauser.GetOwner then
+        local ok, owner = pcall(function() return DamageCauser:GetOwner() end)
+        if ok and owner then
+            ownerPawn = TryGetPawn(owner)
+            if not ownerPawn and owner.GetOwner then
+                local ok2, owner2 = pcall(function() return owner:GetOwner() end)
+                if ok2 and owner2 then
+                    ownerPawn = TryGetPawn(owner2)
+                end
+            end
+        end
+    end
+    
+    local bInMineCarMode = ownerPawn and ownerPawn.IsMineCarMode and ownerPawn:IsMineCarMode() or false
+    
+    -- 如果在矿车模式中，优先使用玩家的AxeLevel属性
+    if bInMineCarMode and ownerPawn then
+        local mineCarAxeLevel = UGCAttributeSystem.GetGameAttributeValue(ownerPawn, "AxeLevel")
+        if (not mineCarAxeLevel or mineCarAxeLevel <= 0) and ownerPawn._mineCarAxeLevel then
+            mineCarAxeLevel = ownerPawn._mineCarAxeLevel
+        end
+        if mineCarAxeLevel and mineCarAxeLevel > 0 then
+            ugcprint(string.format("[MiningSystem] 矿车模式伤害判定: AxeLevel=%s", tostring(mineCarAxeLevel)))
+            return mineCarAxeLevel
+        end
+    end
+    
+    -- 获取当前武器
     local currentWeapon = nil
     if UGCWeaponManagerSystem and UGCWeaponManagerSystem.GetCurrentWeapon then
         local ok, weapon = pcall(UGCWeaponManagerSystem.GetCurrentWeapon, DamageCauser)
@@ -87,10 +126,9 @@ function MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
         end
     end
     
-    if not currentWeapon and DamageCauser.GetOwner then
-        local owner = DamageCauser:GetOwner()
-        if owner and UGCWeaponManagerSystem and UGCWeaponManagerSystem.GetCurrentWeapon then
-            local ok, weapon = pcall(UGCWeaponManagerSystem.GetCurrentWeapon, owner)
+    if not currentWeapon and ownerPawn then
+        if UGCWeaponManagerSystem and UGCWeaponManagerSystem.GetCurrentWeapon then
+            local ok, weapon = pcall(UGCWeaponManagerSystem.GetCurrentWeapon, ownerPawn)
             if ok then
                 currentWeapon = weapon
             end
@@ -98,22 +136,38 @@ function MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
     end
     
     if currentWeapon then
+        -- 检查武器的AxeLevel属性
         local axeLevel = UGCAttributeSystem.GetGameAttributeValue(currentWeapon, "AxeLevel")
         if axeLevel and axeLevel > 0 then
+            ugcprint(string.format("[MiningSystem] 武器AxeLevel: %s", tostring(axeLevel)))
             return axeLevel
         end
         
         if currentWeapon.GetClass then
-            local level = MiningSystem.GetAxeLevelByClassName(currentWeapon:GetClass())
-            if level > 0 then
-                return level
+            local className = tostring(currentWeapon:GetClass()):lower()
+            local isMineCarWeapon = string.find(className, "miningvehicle") ~= nil or string.find(className, "miningtruck") ~= nil
+            if isMineCarWeapon and not bInMineCarMode then
+                ugcprint("[MiningSystem] 矿车武器已装备但玩家不在矿车模式，跳过等级判定")
+            else
+                local level = MiningSystem.GetAxeLevelByClassName(currentWeapon:GetClass())
+                if level > 0 then
+                    ugcprint(string.format("[MiningSystem] 武器类名匹配: %s -> level=%d", currentWeapon:GetClass(), level))
+                    return level
+                end
             end
         end
         
         if currentWeapon.GetName then
-            local level = MiningSystem.GetAxeLevelByClassName(currentWeapon:GetName())
-            if level > 0 then
-                return level
+            local nameStr = tostring(currentWeapon:GetName()):lower()
+            local isMineCarWeapon = string.find(nameStr, "miningvehicle") ~= nil or string.find(nameStr, "miningtruck") ~= nil
+            if isMineCarWeapon and not bInMineCarMode then
+                ugcprint("[MiningSystem] 矿车武器(按名称)已装备但玩家不在矿车模式，跳过等级判定")
+            else
+                local level = MiningSystem.GetAxeLevelByClassName(currentWeapon:GetName())
+                if level > 0 then
+                    ugcprint(string.format("[MiningSystem] 武器名匹配: %s -> level=%d", currentWeapon:GetName(), level))
+                    return level
+                end
             end
         end
         
@@ -122,6 +176,7 @@ function MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
             if ok and itemID then
                 local level = MiningSystem.GetAxeLevelByItemID(itemID)
                 if level > 0 then
+                    ugcprint(string.format("[MiningSystem] 武器ItemID匹配: %s -> level=%d", tostring(itemID), level))
                     return level
                 end
             end
@@ -132,14 +187,17 @@ function MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
             if itemID then
                 local level = MiningSystem.GetAxeLevelByItemID(itemID)
                 if level > 0 then
+                    ugcprint(string.format("[MiningSystem] 武器GetItemID匹配: %s -> level=%d", tostring(itemID), level))
                     return level
                 end
             end
         end
     end
     
+    -- 最后检查伤害发起者的AxeLevel
     local axeLevel = UGCAttributeSystem.GetGameAttributeValue(DamageCauser, "AxeLevel")
     if axeLevel and axeLevel > 0 then
+        ugcprint(string.format("[MiningSystem] 伤害发起者AxeLevel: %s", tostring(axeLevel)))
         return axeLevel
     end
     
@@ -148,6 +206,7 @@ function MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
         if ok and itemID then
             local level = MiningSystem.GetAxeLevelByItemID(itemID)
             if level > 0 then
+                ugcprint(string.format("[MiningSystem] 伤害发起者ItemID匹配: %s -> level=%d", tostring(itemID), level))
                 return level
             end
         end
@@ -158,11 +217,13 @@ function MiningSystem.GetAxeLevelFromDamageCauser(DamageCauser)
         if itemID then
             local level = MiningSystem.GetAxeLevelByItemID(itemID)
             if level > 0 then
+                ugcprint(string.format("[MiningSystem] 伤害发起者GetItemID匹配: %s -> level=%d", tostring(itemID), level))
                 return level
             end
         end
     end
     
+    ugcprint("[MiningSystem] 未找到AxeLevel，返回0")
     return 0
 end
 

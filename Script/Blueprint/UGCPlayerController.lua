@@ -512,55 +512,10 @@ local function IsMineTeleportUnlocked(PC)
     return PC ~= nil and PC.bMineTeleportUnlocked == true
 end
 
-local function TeleportPawnTo(PC, X, Y, Z)
-    ugcprint(string.format("[Teleport] ? 开始传送 (%.0f,%.0f,%.0f)", X, Y, Z))
-    
-    ugcprint("[Teleport] ① ForceStopMineCarMode...")
-    pcall(function()
-        local PawnStop = GetPawnByControllerSafe(PC)
-        if PawnStop and PawnStop.SetMineCarMode then
-            PawnStop:SetMineCarMode(false)
-        end
-    end)
-    ugcprint("[Teleport] ① ForceStopMineCarMode 完成")
-
-    local Pawn = nil
-    ugcprint("[Teleport] ② 尝试获取 Pawn...")
-    if PC then
-        if PC.GetPlayerCharacterSafety then
-            local Ok, P = pcall(function()
-                return PC:GetPlayerCharacterSafety()
-            end)
-            ugcprint(string.format("[Teleport] ②a GetPlayerCharacterSafety: Ok=%s, Pawn=%s", tostring(Ok), tostring(P)))
-            if Ok then Pawn = P end
-        end
-        if Pawn == nil and PC.K2_GetPawn then
-            local Ok, P = pcall(function()
-                return PC:K2_GetPawn()
-            end)
-            ugcprint(string.format("[Teleport] ②b K2_GetPawn: Ok=%s, Pawn=%s", tostring(Ok), tostring(P)))
-            if Ok then Pawn = P end
-        end
-    end
-    if Pawn == nil and UGCGameSystem and UGCGameSystem.GetPlayerPawn then
-        local Ok, P = pcall(UGCGameSystem.GetPlayerPawn, PC)
-        ugcprint(string.format("[Teleport] ②c GetPlayerPawn: Ok=%s, Pawn=%s", tostring(Ok), tostring(P)))
-        if Ok then Pawn = P end
-    end
-    if Pawn == nil then
-        ugcprint("[Teleport] ❌ 找不到 Pawn")
-        return false
-    end
-    ugcprint(string.format("[Teleport] ② Pawn 获取成功: %s", tostring(Pawn)))
-
-    pcall(function()
-        if Pawn.SetMineCarMode then Pawn:SetMineCarMode(false) end
-    end)
-
+local function DoTeleportPawnInternal(Pawn, X, Y, Z)
     local Loc = Vector.New(X, Y, Z)
-    ugcprint(string.format("[Teleport] ③ 目标位置: %s", tostring(Loc)))
+    ugcprint(string.format("[Teleport] 执行传送至: (%.0f,%.0f,%.0f)", X, Y, Z))
 
-    -- 方案1: K2_TeleportTo (仅2个参数: DestLocation, DestRotation)
     if Pawn.K2_TeleportTo then
         ugcprint("[Teleport] 尝试 K2_TeleportTo(2参数)")
         local Ok1, Err1 = pcall(function()
@@ -579,7 +534,6 @@ local function TeleportPawnTo(PC, X, Y, Z)
         end
     end
 
-    -- 方案2: K2_SetActorLocation (3参数: NewLocation, bSweep, SweepHitResult)
     if Pawn.K2_SetActorLocation then
         ugcprint("[Teleport] 尝试 K2_SetActorLocation(3参数)")
         local Ok2, Err2 = pcall(function()
@@ -598,7 +552,6 @@ local function TeleportPawnTo(PC, X, Y, Z)
         end
     end
 
-    -- 方案3: SetActorLocation (UE 原生, 可能不存在)
     if Pawn.SetActorLocation then
         ugcprint("[Teleport] 尝试 SetActorLocation")
         local Ok3, Err3 = pcall(function()
@@ -616,6 +569,93 @@ local function TeleportPawnTo(PC, X, Y, Z)
 
     ugcprint("[Teleport] ❌ 所有方案均失败")
     return false
+end
+
+local function TeleportPawnTo(PC, X, Y, Z)
+    ugcprint(string.format("[Teleport] ? 开始传送 (%.0f,%.0f,%.0f)", X, Y, Z))
+
+    local Pawn = nil
+    ugcprint("[Teleport] ① 尝试获取 Pawn...")
+    if PC then
+        if PC.GetPlayerCharacterSafety then
+            local Ok, P = pcall(function()
+                return PC:GetPlayerCharacterSafety()
+            end)
+            ugcprint(string.format("[Teleport] ①a GetPlayerCharacterSafety: Ok=%s, Pawn=%s", tostring(Ok), tostring(P)))
+            if Ok then Pawn = P end
+        end
+        if Pawn == nil and PC.K2_GetPawn then
+            local Ok, P = pcall(function()
+                return PC:K2_GetPawn()
+            end)
+            ugcprint(string.format("[Teleport] ①b K2_GetPawn: Ok=%s, Pawn=%s", tostring(Ok), tostring(P)))
+            if Ok then Pawn = P end
+        end
+    end
+    if Pawn == nil and UGCGameSystem and UGCGameSystem.GetPlayerPawn then
+        local Ok, P = pcall(UGCGameSystem.GetPlayerPawn, PC)
+        ugcprint(string.format("[Teleport] ①c GetPlayerPawn: Ok=%s, Pawn=%s", tostring(Ok), tostring(P)))
+        if Ok then Pawn = P end
+    end
+    if Pawn == nil then
+        ugcprint("[Teleport] ❌ 找不到 Pawn")
+        return false
+    end
+    ugcprint(string.format("[Teleport] ① Pawn 获取成功: %s", tostring(Pawn)))
+
+    if Pawn.bIsMineCarMode then
+        ugcprint("[Teleport] ⚠️ 检测到矿车模式，先清理矿车状态再传送...")
+
+        pcall(function()
+            if Pawn.SetMineCarMode then Pawn:SetMineCarMode(false) end
+        end)
+
+        UGCAttributeSystem.SetGameAttributeValue(Pawn, "AxeLevel", 0)
+
+        pcall(function()
+            UnrealNetwork.CallUnrealRPC(PC, PC, "Client_ForceStopMineCarMode")
+        end)
+
+        if UGCTimerManagerSystem and UGCTimerManagerSystem.SetTimer then
+            local TargetX, TargetY, TargetZ = X, Y, Z
+            local TargetPC = PC
+
+            UGCTimerManagerSystem.SetTimer(function()
+                local CurrentPawn = GetPawnByControllerSafe(TargetPC)
+                if CurrentPawn and UE.IsValid(CurrentPawn) then
+                    if CurrentPawn.bIsMineCarMode then
+                        ugcprint("[Teleport] 矿车模式仍未关闭，强制清理...")
+                        pcall(function()
+                            if CurrentPawn.SetMineCarMode then CurrentPawn:SetMineCarMode(false) end
+                        end)
+                        pcall(function()
+                            UnrealNetwork.CallUnrealRPC(TargetPC, TargetPC, "Client_ForceStopMineCarMode")
+                        end)
+                    end
+
+                    UGCAttributeSystem.SetGameAttributeValue(CurrentPawn, "AxeLevel", 0)
+
+                    local Ok = DoTeleportPawnInternal(CurrentPawn, TargetX, TargetY, TargetZ)
+                    if Ok then
+                        ugcprint("[Teleport] ✅ 延迟传送成功")
+                    else
+                        ugcprint("[Teleport] ❌ 延迟传送失败")
+                    end
+
+                    if TargetPC._pendingTeleportCallback then
+                        TargetPC._pendingTeleportCallback(Ok)
+                        TargetPC._pendingTeleportCallback = nil
+                    end
+                end
+            end, 0.15, false)
+
+            return true
+        end
+
+        ugcprint("[Teleport] ⚠️ 计时器不可用，使用立即传送（可能存在问题）")
+    end
+
+    return DoTeleportPawnInternal(Pawn, X, Y, Z)
 end
 
 --- 与 WBP_JadeAppraisal 价值公式一致（仅服务端记账）
@@ -1898,16 +1938,28 @@ function UGCPlayerController:Server_TeleportToMineZone(ZoneId)
         Zone.PadX, Zone.PadY, Zone.PadZ
     )
 
-    -- 同时在服务端也尝试传送（双保险）
+    self._pendingTeleportCallback = function(Ok)
+        ugcprint(string.format("[MineTeleport] 延迟传送完成: Ok=%s", tostring(Ok)))
+        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleported", ZoneId)
+        UnrealNetwork.CallUnrealRPC(
+            self, self, "Client_MineTeleportNotify",
+            "已传送至「" .. tostring(Zone.Name) .. "」"
+        )
+        self._pendingTeleportCallback = nil
+    end
+
     local Ok = TeleportPawnTo(self, Zone.PadX, Zone.PadY, Zone.PadZ)
     ugcprint(string.format("[MineTeleport] TeleportPawnTo 返回: %s", tostring(Ok)))
 
-    ugcprint(string.format("[MineTeleport] ✅ 传送流程完成至 %s", Zone.Name))
-    UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleported", ZoneId)
-    UnrealNetwork.CallUnrealRPC(
-        self, self, "Client_MineTeleportNotify",
-        "已传送至「" .. tostring(Zone.Name) .. "」"
-    )
+    if self._pendingTeleportCallback then
+        ugcprint(string.format("[MineTeleport] ✅ 传送流程完成至 %s", Zone.Name))
+        self._pendingTeleportCallback = nil
+        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineTeleported", ZoneId)
+        UnrealNetwork.CallUnrealRPC(
+            self, self, "Client_MineTeleportNotify",
+            "已传送至「" .. tostring(Zone.Name) .. "」"
+        )
+    end
 end
 
 function UGCPlayerController:Client_MineTeleported(ZoneId)
@@ -1936,6 +1988,14 @@ function UGCPlayerController:Client_ExecuteTeleport(X, Y, Z)
     if Pawn == nil then
         ugcprint("[Teleport-Client] ❌ 客户端找不到 Pawn")
         return
+    end
+
+    if Pawn.bIsMineCarMode then
+        ugcprint("[Teleport-Client] ⚠️ 客户端矿车模式清理...")
+        pcall(function()
+            if Pawn.SetMineCarMode then Pawn:SetMineCarMode(false) end
+        end)
+        UGCAttributeSystem.SetGameAttributeValue(Pawn, "AxeLevel", 0)
     end
 
     local Loc = Vector.New(X, Y, Z)
@@ -2013,16 +2073,28 @@ function UGCPlayerController:Server_ReturnToSpawn()
         self, self, "Client_ExecuteTeleport", sx, sy, sz
     )
 
-    -- 服务端也尝试传送
+    self._pendingTeleportCallback = function(Ok)
+        ugcprint(string.format("[MineTeleport] 延迟返回出生点完成: Ok=%s", tostring(Ok)))
+        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineReturnedToSpawn")
+        UnrealNetwork.CallUnrealRPC(
+            self, self, "Client_MineTeleportNotify",
+            "已返回出生点"
+        )
+        self._pendingTeleportCallback = nil
+    end
+
     local Ok = TeleportPawnTo(self, sx, sy, sz)
     ugcprint(string.format("[MineTeleport] TeleportPawnTo 返回: %s", tostring(Ok)))
 
-    ugcprint("[MineTeleport] ✅ 返回出生点完成")
-    UnrealNetwork.CallUnrealRPC(self, self, "Client_MineReturnedToSpawn")
-    UnrealNetwork.CallUnrealRPC(
-        self, self, "Client_MineTeleportNotify",
-        "已返回出生点"
-    )
+    if self._pendingTeleportCallback then
+        ugcprint("[MineTeleport] ✅ 返回出生点完成")
+        self._pendingTeleportCallback = nil
+        UnrealNetwork.CallUnrealRPC(self, self, "Client_MineReturnedToSpawn")
+        UnrealNetwork.CallUnrealRPC(
+            self, self, "Client_MineTeleportNotify",
+            "已返回出生点"
+        )
+    end
 end
 
 function UGCPlayerController:Client_MineReturnedToSpawn()
@@ -3338,16 +3410,59 @@ end
 local function ApplyMineCarModeForVehicle(PC, Vehicle, bForceRefresh)
     local Pawn = GetPawnByControllerSafe(PC)
     if Pawn and Pawn.SetMineCarMode then
-        if bForceRefresh and Pawn.IsMineCarMode then
-            local Ok, bMineCar = pcall(function()
-                return Pawn:IsMineCarMode()
-            end)
-            if Ok and bMineCar == true then
-                Pawn:SetMineCarMode(false)
+        local mineLevel = math.floor(tonumber(Vehicle.MineLevel) or 0)
+        ugcprint(string.format("[矿车模式] ApplyMineCarModeForVehicle: bForceRefresh=%s, mineLevel=%d, 当前AxeLevel=%s",
+            tostring(bForceRefresh), mineLevel, tostring(UGCAttributeSystem.GetGameAttributeValue(Pawn, "AxeLevel"))))
+
+        -- 先设置AxeLevel，避免SetMineCarMode(false)触发的RestoreMesh传送问题
+        Pawn._mineCarAxeLevel = mineLevel
+        -- 存储技能路径供DoSetMineCarMode使用
+        if Vehicle.SkillPath then
+            Pawn._mineCarSkillPath = Vehicle.SkillPath
+        end
+        UGCAttributeSystem.SetGameAttributeValue(Pawn, "AxeLevel", mineLevel)
+
+        if bForceRefresh then
+            -- 强制刷新：先关闭但跳过RestoreMesh传送
+            local hadMineCarMode = Pawn.bIsMineCarMode == true
+            if hadMineCarMode then
+                -- 保存当前位置用于后续恢复
+                local curLoc = nil
+                if Pawn.K2_GetActorLocation then
+                    local ok, loc = pcall(Pawn.K2_GetActorLocation, Pawn)
+                    if ok then curLoc = loc end
+                end
+                ugcprint(string.format("[矿车模式] 强制刷新前保存位置: %s", curLoc and string.format("(%.0f,%.0f,%.0f)", curLoc.X, curLoc.Y, curLoc.Z) or "nil"))
+            end
+
+            Pawn:SetMineCarMode(false)
+
+            if hadMineCarMode and curLoc then
+                -- 恢复到保存的位置，防止RestoreMesh传送导致位置错乱
+                local currentLoc = nil
+                if Pawn.K2_GetActorLocation then
+                    local ok, loc = pcall(Pawn.K2_GetActorLocation, Pawn)
+                    if ok then currentLoc = loc end
+                end
+                if currentLoc and math.abs(currentLoc.X - curLoc.X) > 100 then
+                    ugcprint("[矿车模式] 检测到位置偏移，尝试恢复...")
+                    pcall(function()
+                        Pawn:K2_SetActorLocation(curLoc, false, nil)
+                    end)
+                end
             end
         end
-        UGCAttributeSystem.SetGameAttributeValue(Pawn, "AxeLevel", math.floor(tonumber(Vehicle.MineLevel) or 0))
+
+        -- 再次确保AxeLevel正确设置（防止SetMineCarMode(false)中的清理覆盖）
+        UGCAttributeSystem.SetGameAttributeValue(Pawn, "AxeLevel", mineLevel)
+
         Pawn:SetMineCarMode(true)
+
+        -- 最终确认AxeLevel
+        local finalAxeLevel = UGCAttributeSystem.GetGameAttributeValue(Pawn, "AxeLevel")
+        ugcprint(string.format("[矿车模式] ApplyMineCarModeForVehicle完成: AxeLevel=%s, bIsMineCarMode=%s",
+            tostring(finalAxeLevel), tostring(Pawn.bIsMineCarMode)))
+
         return true
     end
     return false
@@ -3565,9 +3680,22 @@ function UGCPlayerController:Client_VehicleRepairState(VehicleId, bBroken, Vehic
     if self.ClientVehicleRepairStateMap[Key] == VEHICLE_STATE_ACTIVE then
         local Pawn = GetPawnByControllerSafe(self)
         if Pawn and Pawn.DoSetMineCarMode then
-            Pawn:DoSetMineCarMode(true)
-        elseif Pawn then
-            Pawn.bIsMineCarMode = true
+            -- 获取矿车等级并设置AxeLevel
+            local Vehicle, _ = VehicleRepairConfig.GetVehicle(Key)
+            if Vehicle then
+                local mineLevel = math.floor(tonumber(Vehicle.MineLevel) or 0)
+                Pawn._mineCarAxeLevel = mineLevel
+                -- 同步技能路径供DoSetMineCarMode使用
+                if Vehicle.SkillPath then
+                    Pawn._mineCarSkillPath = Vehicle.SkillPath
+                end
+                UGCAttributeSystem.SetGameAttributeValue(Pawn, "AxeLevel", mineLevel)
+                ugcprint(string.format("[客户端矿车] 设置AxeLevel=%d, SkillPath=%s", mineLevel, tostring(Vehicle.SkillPath)))
+            end
+            
+            if not Pawn:IsMineCarMode() then
+                Pawn:DoSetMineCarMode(true)
+            end
         end
     elseif self.ClientVehicleRepairStateMap[Key] == VEHICLE_STATE_BROKEN or self.ClientVehicleRepairStateMap[Key] == VEHICLE_STATE_PENDING_CHECK then
         self:Client_ForceStopMineCarMode()

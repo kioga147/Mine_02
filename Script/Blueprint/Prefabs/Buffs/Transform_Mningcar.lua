@@ -52,8 +52,21 @@ local function RemoveMineCarSkills(OwnerActor)
     for _, SkillPath in ipairs(MINE_CAR_SKILL_PATHS) do
         local SkillClass = LoadMineCarSkillClass(SkillPath)
         local Ok, Skills = pcall(UGCPersistEffectSystem.GetSkillsByClass, OwnerActor, SkillClass)
-        if Ok and type(Skills) == "table" then
-            for _, Skill in ipairs(Skills) do
+        if Ok and Skills ~= nil then
+            local List = type(Skills) == "table" and Skills or nil
+            if List == nil then
+                List = {}
+                pcall(function()
+                    for i = 1, 100 do
+                        local Skill = Skills[i]
+                        if Skill == nil then
+                            break
+                        end
+                        table.insert(List, Skill)
+                    end
+                end)
+            end
+            for _, Skill in pairs(List) do
                 RemoveSkillInstanceSafe(OwnerActor, Skill)
             end
         end
@@ -66,6 +79,18 @@ TransformStaticMeshCollisionType = UE.LoadEnum("/Game/UGC/UGCGame/Buff/BuffTempl
 
 function Transform_Mningcar:OnApply_BP()
 	if self:HasAuthority() then
+        -- 保存当前位置用于后续位置比较
+        local OwnerActor = self:GetOwnerActor()
+        if OwnerActor and OwnerActor.K2_GetActorLocation then
+            self._preTransformLocation = OwnerActor:K2_GetActorLocation()
+            if self._preTransformLocation then
+                print(string.format("[Transform_Mningcar] 保存变身前位置: %.0f, %.0f, %.0f",
+                    self._preTransformLocation.X or 0,
+                    self._preTransformLocation.Y or 0,
+                    self._preTransformLocation.Z or 0))
+            end
+        end
+
 		self:InitExtraHealth()
 		self:InitSkill()
         self:InitMesh()
@@ -87,6 +112,27 @@ function Transform_Mningcar:OnUnApply_BP()
         self:RestoreExtraHealth()
         self:RestoreSkill()
         self:RestoreMesh()
+
+        -- 若变身Buff被意外移除/取消而矿车模式标记仍为true，延迟清理判定，避免“有判定无车身”
+        local OwnerActor = self:GetOwnerActor()
+        if OwnerActor and OwnerActor._mineCarSuppressBuffCleanup ~= true
+            and OwnerActor.IsMineCarMode and OwnerActor:IsMineCarMode() then
+            ugcprint("[Transform_Mningcar] 变身Buff已移除但矿车模式标记仍存在，延迟清理矿车模式")
+            local function ClearMineCarMode()
+                if OwnerActor and UE.IsValid(OwnerActor) and OwnerActor.IsMineCarMode and OwnerActor:IsMineCarMode() then
+                    if OwnerActor.SetMineCarMode then
+                        OwnerActor:SetMineCarMode(false)
+                    elseif OwnerActor.DoSetMineCarMode then
+                        OwnerActor:DoSetMineCarMode(false)
+                    end
+                end
+            end
+            if UGCTimerManagerSystem and UGCTimerManagerSystem.SetTimer then
+                UGCTimerManagerSystem.SetTimer(ClearMineCarMode, 0.1, false)
+            else
+                ClearMineCarMode()
+            end
+        end
     else
         self:RestoreMesh()
         self:RestoreAnim()
@@ -186,7 +232,7 @@ function Transform_Mningcar:InitSkill()
         local Skill = UGCPersistEffectSystem.AddSkillByClass(self:GetOwnerActor(), SkillClass)
         table.insert(self.CachedAppliedSkill, Skill)
 	end
-    
+
     self:ReapplyCurrentWeaponSkills()
 end
 
@@ -195,33 +241,47 @@ function Transform_Mningcar:ReapplyCurrentWeaponSkills()
     if not PlayerPawn then
         return
     end
-    
-    ugcprint("[矿车变身] 直接添加BasicVehicle技能")
-    
-    local SkillPath = "Asset/Blueprint/Prefabs/Skills/BasicVehicle.BasicVehicle_C"
+
+    local SkillPath = PlayerPawn._mineCarSkillPath or "Asset/Blueprint/Prefabs/Skills/BasicVehicle.BasicVehicle_C"
+    ugcprint("[矿车变身] 直接添加矿车技能:", SkillPath)
     local FullPath = UGCGameSystem.GetUGCResourcesFullPath(SkillPath)
     ugcprint("[矿车变身] 技能路径:", FullPath)
-    
+
     local SkillClass = UGCObjectUtility.LoadClass(FullPath)
     if SkillClass then
         ugcprint("[矿车变身] 技能类加载成功:", tostring(SkillClass))
-        
-        local ExistSkills = UGCPersistEffectSystem.GetSkillsByClass(PlayerPawn, SkillClass)
-        ugcprint("[矿车变身] 已有技能数量:", #ExistSkills)
-        
-        if #ExistSkills == 0 then
-            local Skill = UGCPersistEffectSystem.AddSkillByClass(PlayerPawn, SkillClass, -1)
-            if Skill then
-                table.insert(self.CachedAppliedSkill, Skill)
-                ugcprint("[矿车变身] ✅ 成功添加BasicVehicle技能")
-                table.insert(self.CachedAppliedSkill, Skill)
-                
-            else
-                ugcprint("[矿车变身] ❌ 添加技能失败")
+
+        local OkList, ExistSkills = pcall(UGCPersistEffectSystem.GetSkillsByClass, PlayerPawn, SkillClass)
+        local Existing = OkList and type(ExistSkills) == "table" and ExistSkills or {}
+        local HasActiveSkill = false
+        local AnyExisting = false
+        for _, Skill in pairs(Existing) do
+            if Skill ~= nil then
+                AnyExisting = true
+                if Skill.IsActive then
+                    HasActiveSkill = true
+                end
             end
+        end
+        ugcprint("[矿车变身] 已有技能数量:", AnyExisting and 1 or 0)
+
+        if not HasActiveSkill then
+            for _, Skill in pairs(Existing) do
+                if Skill ~= nil then
+                    RemoveSkillInstanceSafe(PlayerPawn, Skill)
+                end
+            end
+            -- 不在Buff应用过程中添加，避免被变身流程回收；由矿车模式在Buff应用完成后统一添加
+            ugcprint("[矿车变身] 未检测到激活技能，等待矿车模式统一添加:", SkillPath)
         else
-            ugcprint("[矿车变身] ⚠️ 技能已存在")
-            local Skill = ExistSkills[1]
+            ugcprint("[矿车变身] ✅ 已有激活的矿车技能，复用")
+            local Skill = nil
+            for _, S in pairs(Existing) do
+                if S ~= nil and S.IsActive then
+                    Skill = S
+                    break
+                end
+            end
             if Skill then
                 ugcprint("[矿车变身] 技能状态 IsActive:", tostring(Skill.IsActive))
                 local bAlreadyCached = false
@@ -239,9 +299,15 @@ function Transform_Mningcar:ReapplyCurrentWeaponSkills()
     else
         ugcprint("[矿车变身] ❌ 无法加载技能类")
     end
-    
+
     local AllSkills = UGCPersistEffectSystem.GetSkillsByClass(PlayerPawn)
-    ugcprint("[矿车变身] 玩家当前技能总数:", #AllSkills)
+    local AllCount = 0
+    if type(AllSkills) == "table" then
+        for _ in pairs(AllSkills) do
+            AllCount = AllCount + 1
+        end
+    end
+    ugcprint("[矿车变身] 玩家当前技能总数:", AllCount)
 end
 
 
@@ -288,7 +354,7 @@ function Transform_Mningcar:InitPawnMesh()
         self:GetOwnerActor():DSTeleportToLocationOrRotation(ActorLocation, {}, true, false, true)
 
         UGCPlayerPawnSystem.ChangeAvatarMesh(self:GetOwnerActor(), self.TransformSkeletalMesh)
-        
+
         if UGCTimerManagerSystem and UGCTimerManagerSystem.SetTimer then
             UGCTimerManagerSystem.SetTimer(function()
                 self:ReapplyCurrentWeaponSkills()
@@ -297,7 +363,7 @@ function Transform_Mningcar:InitPawnMesh()
             self:ReapplyCurrentWeaponSkills()
         end
     end
-    
+
 end
 
 
@@ -402,22 +468,57 @@ end
 
 function Transform_Mningcar:RestoreMesh()
     if self:HasAuthority() then
-        if self.TransformMeshAndAnimType == TransformMeshAndAnimType.Pawn then
-            self:RestorePawnMesh()
-        elseif self.TransformMeshAndAnimType == TransformMeshAndAnimType.Static then
-            self:RestoreStaticMesh()
-        elseif self.TransformMeshAndAnimType == TransformMeshAndAnimType.Preset then
-            self:RestorePresetMesh()
+        local OwnerActor = self:GetOwnerActor()
+        local bShouldRestoreMesh = true
+
+        -- 检查是否应该执行mesh恢复（避免与传送冲突）
+        if OwnerActor and OwnerActor.IsTeleporting and OwnerActor:IsTeleporting() then
+            print("[Transform_Mningcar] 正在传送中，跳过RestoreMesh传送")
+            bShouldRestoreMesh = false
         end
 
-        local DetectObjectTypes = {0,1,2,3,4,5,6,7}
-        local bSuccess, TargetLocation = UGCSceneQueryUtility.FindPositionToHoldCapsule(self, self.RestoreTargetLocation, self:GetOwnerActor():K2_GetActorRotation(), self.CachedCapsuleRadius, self.CachedCapsuleHeight, {self:GetOwnerActor()}, DetectObjectTypes, 32, true, true)
-        if bSuccess then
-            print("TargetLocation, X:"..TargetLocation.X..", Y:"..TargetLocation.Y..", Z:"..TargetLocation.Z)
-            self:GetOwnerActor():DSTeleportToLocationOrRotation(TargetLocation, {}, true, false, true)
+        -- 检查最近是否被传送过（位置变化超过阈值）
+        if OwnerActor and OwnerActor.K2_GetActorLocation and self._preTransformLocation then
+            local curLoc = OwnerActor:K2_GetActorLocation()
+            if curLoc then
+                local dist = math.sqrt((curLoc.X - self._preTransformLocation.X)^2 +
+                                       (curLoc.Y - self._preTransformLocation.Y)^2 +
+                                       (curLoc.Z - self._preTransformLocation.Z)^2)
+                -- 如果距离超过1000单位，说明玩家已经被传送过
+                if dist > 1000 then
+                    print(string.format("[Transform_Mningcar] 检测到玩家已移动较远(%.0f)，跳过RestoreMesh传送", dist))
+                    bShouldRestoreMesh = false
+                end
+            end
+        end
+
+        if bShouldRestoreMesh then
+            if self.TransformMeshAndAnimType == TransformMeshAndAnimType.Pawn then
+                self:RestorePawnMesh()
+            elseif self.TransformMeshAndAnimType == TransformMeshAndAnimType.Static then
+                self:RestoreStaticMesh()
+            elseif self.TransformMeshAndAnimType == TransformMeshAndAnimType.Preset then
+                self:RestorePresetMesh()
+            end
+
+            local DetectObjectTypes = {0,1,2,3,4,5,6,7}
+            local bSuccess, TargetLocation = UGCSceneQueryUtility.FindPositionToHoldCapsule(self, self.RestoreTargetLocation, OwnerActor:K2_GetActorRotation(), self.CachedCapsuleRadius, self.CachedCapsuleHeight, {OwnerActor}, DetectObjectTypes, 32, true, true)
+            if bSuccess then
+                print("TargetLocation, X:"..TargetLocation.X..", Y:"..TargetLocation.Y..", Z:"..TargetLocation.Z)
+                OwnerActor:DSTeleportToLocationOrRotation(TargetLocation, {}, true, false, true)
+            else
+                ---原地被迫还原
+                OwnerActor:DSTeleportToLocationOrRotation(self.RestoreTargetLocation, {}, true, false, true)
+            end
         else
-            ---原地被迫还原
-            self:GetOwnerActor():DSTeleportToLocationOrRotation(self.RestoreTargetLocation, {}, true, false, true)
+            -- 只恢复mesh外观，不传送
+            if self.TransformMeshAndAnimType == TransformMeshAndAnimType.Pawn then
+                self:RestorePawnMesh()
+            elseif self.TransformMeshAndAnimType == TransformMeshAndAnimType.Static then
+                self:RestoreStaticMesh()
+            elseif self.TransformMeshAndAnimType == TransformMeshAndAnimType.Preset then
+                self:RestorePresetMesh()
+            end
         end
 
     else
@@ -439,7 +540,7 @@ function Transform_Mningcar:RestorePawnMesh()
         --- 大小还原后调整角色位置到地面
         self.RestoreTargetLocation = self:GetOwnerActor():K2_GetActorLocation()
         self.RestoreTargetLocation.Z = self.RestoreTargetLocation.Z + (self.CachedScale.Z - self.TransformScale.Z) * self:GetOwnerActor().CapsuleComponent:GetUnscaledCapsuleHalfHeight()
-        
+
         UGCPawnSystem.RecoverAvatarMesh(self:GetOwnerActor())
     end
 end

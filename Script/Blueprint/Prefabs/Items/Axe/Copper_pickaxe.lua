@@ -2,6 +2,16 @@
 --Edit Below--
 local Copper_pickaxe = {} 
 
+local MineCarItemHelper = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire("Script.Common.MineCarItemHelper")
+    end)
+    if Ok and type(Mod) == "table" then
+        MineCarItemHelper = Mod
+    end
+end
+
 --[[经典背包事件]]--
 --[[
 --- func 处理物品的拾取(服务端生效)
@@ -160,5 +170,19 @@ local Copper_pickaxe = {}
 -- end
 ]]--
 
+
+function Copper_pickaxe:OnEquip()
+    Copper_pickaxe.SuperClass.OnEquip(self)
+    if MineCarItemHelper then
+        MineCarItemHelper.SwitchToMeleeItemByHandle(self, 8310026)
+    end
+end
+
+function Copper_pickaxe:OnUseV2()
+    Copper_pickaxe.SuperClass.OnUseV2(self)
+    if MineCarItemHelper then
+        MineCarItemHelper.SwitchToMeleeItemByHandle(self, 8310026)
+    end
+end
 
 return Copper_pickaxe

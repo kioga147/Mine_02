@@ -382,6 +382,103 @@ do
     end
 end
 
+local AutoMineFactoryConfig = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire("Script.Common.AutoMineFactoryConfig")
+    end)
+    if Ok and type(Mod) == "table" then
+        AutoMineFactoryConfig = Mod
+    else
+        AutoMineFactoryConfig = {
+            UnlockCost = 500000,
+            CycleSec = 60,
+            BaseOreCountPerCycle = 60,
+            DefaultKeepJade = true,
+            GoldItemId = 8310002,
+            JadeOreItemId = 8310011,
+            WorkerOrder = { 1, 2, 3 },
+            Workers = {
+                [1] = { Name = "初级加工矿工", BonusOreCount = 0,  MinMineLevel = 1, MaxMineLevel = 3, Desc = "1~3 级矿物" },
+                [2] = { Name = "中级加工矿工", BonusOreCount = 10, MinMineLevel = 1, MaxMineLevel = 4, Desc = "1~4 级，+10/周期" },
+                [3] = { Name = "高级加工矿工", BonusOreCount = 20, MinMineLevel = 3, MaxMineLevel = 5, Desc = "3~5 级含玉石，+20/周期" },
+            },
+            OrePool = {
+                { ItemId = 8310000, Name = "石头",     MineLevel = 1 },
+                { ItemId = 8310003, Name = "煤矿",     MineLevel = 1 },
+                { ItemId = 8310004, Name = "粗铁矿",   MineLevel = 2 },
+                { ItemId = 8310005, Name = "粗铜矿",   MineLevel = 2 },
+                { ItemId = 8310006, Name = "石英矿",   MineLevel = 2 },
+                { ItemId = 8310007, Name = "粗金矿",   MineLevel = 3 },
+                { ItemId = 8310008, Name = "铝土矿",   MineLevel = 3 },
+                { ItemId = 8310009, Name = "钻石矿",   MineLevel = 4 },
+                { ItemId = 8310010, Name = "红宝石矿", MineLevel = 4 },
+                { ItemId = 8310011, Name = "玉矿石",   MineLevel = 5 },
+            },
+            GetWorker = function(WorkerId)
+                return AutoMineFactoryConfig.Workers[math.floor(tonumber(WorkerId) or 0)]
+            end,
+            GetFirstWorkerId = function() return AutoMineFactoryConfig.WorkerOrder[1] or 1 end,
+            NextWorkerId = function(CurrentId)
+                local Order = AutoMineFactoryConfig.WorkerOrder
+                local Cur = math.floor(tonumber(CurrentId) or 0)
+                for i, Id in ipairs(Order) do
+                    if Id == Cur then return Order[(i % #Order) + 1] end
+                end
+                return AutoMineFactoryConfig.GetFirstWorkerId()
+            end,
+            GetPoolForWorker = function(WorkerId)
+                local W = AutoMineFactoryConfig.GetWorker(WorkerId)
+                if W == nil then return {} end
+                local P = {}
+                for _, Ore in ipairs(AutoMineFactoryConfig.OrePool) do
+                    local L = math.floor(tonumber(Ore.MineLevel) or 0)
+                    if L >= (W.MinMineLevel or 1) and L <= (W.MaxMineLevel or 1) then
+                        P[#P + 1] = Ore
+                    end
+                end
+                return P
+            end,
+            GetTotalOreCountPerCycle = function(WorkerId)
+                local Base = math.floor(tonumber(AutoMineFactoryConfig.BaseOreCountPerCycle) or 60)
+                local W = AutoMineFactoryConfig.GetWorker(WorkerId)
+                return Base + math.floor(tonumber(W and W.BonusOreCount or 0))
+            end,
+            RollCycleRewards = function(WorkerId)
+                local Pool = AutoMineFactoryConfig.GetPoolForWorker(WorkerId)
+                if #Pool <= 0 then return nil end
+                local Count = AutoMineFactoryConfig.GetTotalOreCountPerCycle(WorkerId)
+                local Rewards = {}
+                for _ = 1, Count do
+                    local Ore = Pool[math.random(1, #Pool)]
+                    local Id = math.floor(tonumber(Ore.ItemId) or 0)
+                    Rewards[Id] = (Rewards[Id] or 0) + 1
+                end
+                return Rewards
+            end,
+            RollJadeQuickValue = function() return math.random(0, 10000) end,
+            FormatRewards = function(Rewards)
+                if type(Rewards) ~= "table" then return "" end
+                local Names = {}
+                for Id, C in pairs(Rewards) do
+                    local N = tostring(Id)
+                    for _, Ore in ipairs(AutoMineFactoryConfig.OrePool) do
+                        if Ore.ItemId == Id then N = Ore.Name break end
+                    end
+                    Names[#Names + 1] = string.format("%s x%d", N, math.floor(tonumber(C) or 0))
+                end
+                table.sort(Names)
+                return table.concat(Names, "、")
+            end,
+            FormatRemainingTime = function(Sec)
+                Sec = math.max(0, math.floor(tonumber(Sec) or 0))
+                if Sec >= 60 then return string.format("%d分%02d秒", math.floor(Sec / 60), Sec % 60) end
+                return tostring(Sec) .. "秒"
+            end,
+        }
+    end
+end
+
 local ShopConfig = nil
 do
     local Ok, Mod = pcall(function()
@@ -980,6 +1077,21 @@ function UGCPlayerController:ReceiveBeginPlay()
     end
     if self.ClientJadeCollectionDisplays == nil then
         self.ClientJadeCollectionDisplays = {}
+    end
+    if self.bAutoMineFactoryUnlocked == nil then
+        self.bAutoMineFactoryUnlocked = false
+    end
+    if self.AutoMineFactoryWorkerId == nil then
+        self.AutoMineFactoryWorkerId = AutoMineFactoryConfig.GetFirstWorkerId()
+    end
+    if self.bAutoMineFactoryKeepJade == nil then
+        self.bAutoMineFactoryKeepJade = AutoMineFactoryConfig.DefaultKeepJade ~= false
+    end
+    if self.AutoMineFactoryCycle == nil then
+        self.AutoMineFactoryCycle = nil
+    end
+    if self.ClientAutoMineFactoryCycle == nil then
+        self.ClientAutoMineFactoryCycle = nil
     end
 
     self.JadeCollectionCandidate = nil
@@ -3261,6 +3373,567 @@ function UGCPlayerController:RequestCollectTalentJob()
     InvokeServer(self, "Server_CollectTalentJob")
 end
 
+--- ========== 全自动采矿工厂 ==========
+
+local AMF_STATE_IDLE = 0       -- 未开始（解锁后初始，等待启动下一周期）
+local AMF_STATE_RUNNING = 1    -- 周期进行中
+local AMF_STATE_READY = 2      -- 本周期产出已完成，待领取/售卖
+
+local function IsAutoMineFactoryUnlocked(PC)
+    return PC ~= nil and PC.bAutoMineFactoryUnlocked == true
+end
+
+--- 检查前置条件：所有采矿车（初/中/高级）、矿石加工厂、人才市场、玉石鉴定所、采矿车维修处、矿区传送大厅
+local function CheckAutoMineFactoryPreconditions(PC)
+    if PC == nil then return false, "PC 无效" end
+    local Missing = {}
+    -- 采矿车：必须背包里实际拥有对应物品才算达标
+    local VehicleIds = { 8310025, 8310024, 8310023 }
+    local VehicleNames = { "初级采矿车", "中级采矿车", "高级采矿车" }
+    for i, Id in ipairs(VehicleIds) do
+        local Cnt = 0
+        local Ok, Ret = pcall(function() return UGCBackpackSystemV2.GetItemCountV2(PC, Id) end)
+        if Ok then Cnt = math.floor(tonumber(Ret) or 0) end
+        if Cnt <= 0 then
+            Missing[#Missing + 1] = VehicleNames[i]
+        end
+    end
+    if not (PC.bSmelterUnlocked == true) then Missing[#Missing + 1] = "矿石加工厂" end
+    if not (PC.bTalentMarketUnlocked == true) then Missing[#Missing + 1] = "人才市场" end
+    if not (PC.bJadeShopUnlocked == true) then Missing[#Missing + 1] = "玉石鉴定所" end
+    if not (PC.bVehicleRepairUnlocked == true) then Missing[#Missing + 1] = "采矿车维修处" end
+    if not (PC.bMineTeleportUnlocked == true) then Missing[#Missing + 1] = "矿区传送大厅" end
+    if #Missing > 0 then
+        return false, "尚未解锁：" .. table.concat(Missing, "、")
+    end
+    return true, ""
+end
+
+local function EnsureAutoMineFactoryCycle(PC)
+    if PC.AutoMineFactoryCycle == nil then
+        PC.AutoMineFactoryCycle = {
+            State = AMF_STATE_IDLE,
+            WorkerId = AutoMineFactoryConfig.GetFirstWorkerId(),
+            StartTime = 0,
+            EndTime = 0,
+            Rewards = nil,
+            -- 玉石不保留时，服务端结算时同时计算出鉴定+售卖的总金币估计
+            EstimatedSellGold = 0,
+            JadeAppraisedGold = 0,
+            OreSellGold = 0,
+        }
+    end
+    return PC.AutoMineFactoryCycle
+end
+
+local function RefreshAutoMineFactoryCycleState(Cycle)
+    if Cycle == nil then return end
+    if Cycle.State == AMF_STATE_RUNNING and NowSec() >= (tonumber(Cycle.EndTime) or 0) then
+        Cycle.State = AMF_STATE_READY
+    end
+end
+
+--- 计算总奖励数
+local function GetAutoMineFactoryRewardTotal(Rewards)
+    if type(Rewards) ~= "table" then return 0 end
+    local Total = 0
+    for _, C in pairs(Rewards) do
+        Total = Total + math.floor(tonumber(C) or 0)
+    end
+    return Total
+end
+
+--- 构建背包发放条目（ItemId,Count 的列表）
+local function BuildAutoMineRewardEntries(Rewards, bKeepJade)
+    local Entries = {}
+    if type(Rewards) ~= "table" then return Entries end
+    for ItemId, Count in pairs(Rewards) do
+        ItemId = math.floor(tonumber(ItemId) or 0)
+        Count = math.floor(tonumber(Count) or 0)
+        if Count > 0 and ItemId > 0 then
+            if bKeepJade or ItemId ~= (AutoMineFactoryConfig.JadeOreItemId or 8310011) then
+                Entries[#Entries + 1] = { ItemId = ItemId, Count = Count }
+            end
+        end
+    end
+    table.sort(Entries, function(a, b) return a.ItemId < b.ItemId end)
+    return Entries
+end
+
+--- 尝试把奖励塞进 V2 背包（装不下时返回实际添加数+剩余）
+local function TryDeliverAutoMineRewards(PC, Entries)
+    local Delivered = {}
+    local Remaining = {}
+    local bFull = false
+    for _, E in ipairs(Entries or {}) do
+        local Id = math.floor(tonumber(E.ItemId) or 0)
+        local Need = math.floor(tonumber(E.Count) or 0)
+        if Need <= 0 then goto AMF_CONT end
+        if bFull then
+            Remaining[Id] = (Remaining[Id] or 0) + Need
+            goto AMF_CONT
+        end
+        local Added = 0
+        if UGCBackpackSystemV2 and UGCBackpackSystemV2.AddItemV2 then
+            local Ok, Ret = pcall(UGCBackpackSystemV2.AddItemV2, PC, Id, Need)
+            if Ok then Added = math.floor(tonumber(Ret) or 0) end
+        end
+        if Added <= 0 then
+            Remaining[Id] = (Remaining[Id] or 0) + Need
+            bFull = true
+        else
+            Delivered[Id] = (Delivered[Id] or 0) + Added
+            if Added < Need then
+                Remaining[Id] = (Remaining[Id] or 0) + (Need - Added)
+                bFull = true
+            end
+        end
+        ::AMF_CONT::
+    end
+    return Delivered, Remaining, bFull
+end
+
+--- 依据 OreRecycleConfig 计算"售卖这批矿石+玉石自动快速鉴定"能卖多少钱
+local function EstimateAutoMineSellValue(PC, Rewards)
+    local OreGold = 0
+    local JadeGold = 0
+    if type(Rewards) ~= "table" then return OreGold, JadeGold end
+    local JadeId = AutoMineFactoryConfig.JadeOreItemId or 8310011
+    for ItemId, Count in pairs(Rewards) do
+        ItemId = math.floor(tonumber(ItemId) or 0)
+        local Cnt = math.floor(tonumber(Count) or 0)
+        if Cnt <= 0 then goto AMF_SKIP end
+        if ItemId == JadeId then
+            -- 每块玉按工厂快速鉴定估值
+            for _ = 1, Cnt do
+                JadeGold = JadeGold + AutoMineFactoryConfig.RollJadeQuickValue()
+            end
+        else
+            -- 按 OreRecycleConfig 的单价
+            local Price = 0
+            if OreRecycleConfig and OreRecycleConfig.GetPrice then
+                Price = math.floor(tonumber(OreRecycleConfig.GetPrice(ItemId)) or 0)
+            end
+            if Price <= 0 then
+                -- 回退：UGCPlayerController.lua 内联的 OreRecycle 表
+                local Inline = OreRecycleConfig and OreRecycleConfig.Prices or {}
+                local E = Inline[ItemId]
+                if type(E) == "table" then Price = math.floor(tonumber(E.Price) or 0) end
+            end
+            OreGold = OreGold + Price * Cnt
+        end
+        ::AMF_SKIP::
+    end
+    return OreGold, JadeGold
+end
+
+local function SyncAutoMineFactoryCycleToClient(PC)
+    if PC == nil then return end
+    local Cycle = EnsureAutoMineFactoryCycle(PC)
+    RefreshAutoMineFactoryCycleState(Cycle)
+    local Remaining = math.max(0, math.floor((tonumber(Cycle.EndTime) or 0) - NowSec()))
+    InvokeClient(
+        PC, "Client_AutoMineFactoryCycleSync",
+        Cycle.State or AMF_STATE_IDLE,
+        Cycle.WorkerId or 0,
+        Cycle.EndTime or 0,
+        GetAutoMineFactoryRewardTotal(Cycle.Rewards),
+        AutoMineFactoryConfig.FormatRewards(Cycle.Rewards or {}),
+        Remaining,
+        tonumber(Cycle.EstimatedSellGold) or 0,
+        PC.bAutoMineFactoryKeepJade == true
+    )
+end
+
+function UGCPlayerController:GetAutoMineFactoryStatus(WorkerId)
+    local Cycle = EnsureAutoMineFactoryCycle(self)
+    local bClientCycle = false
+    if not UGCGameSystem.IsServer() and type(self.ClientAutoMineFactoryCycle) == "table" then
+        Cycle = self.ClientAutoMineFactoryCycle
+        bClientCycle = true
+    end
+    local RemainingSec = 0
+    if bClientCycle then
+        local SyncRemaining = tonumber(Cycle.SyncRemainingSec)
+        local SyncLocalTime = tonumber(Cycle.SyncLocalTimeSec)
+        if SyncRemaining ~= nil and SyncLocalTime ~= nil and SyncLocalTime > 0 then
+            local Elapsed = math.max(0, LocalClockSec() - SyncLocalTime)
+            RemainingSec = math.max(0, math.floor(SyncRemaining - Elapsed))
+        else
+            RemainingSec = math.max(0, math.floor((tonumber(Cycle.EndTime) or 0) - NowSec()))
+        end
+        if Cycle.State == AMF_STATE_RUNNING and RemainingSec <= 0 then
+            Cycle.State = AMF_STATE_READY
+        end
+    else
+        RefreshAutoMineFactoryCycleState(Cycle)
+        RemainingSec = math.max(0, math.floor((tonumber(Cycle.EndTime) or 0) - NowSec()))
+    end
+    WorkerId = math.floor(tonumber(WorkerId) or 0)
+    if AutoMineFactoryConfig.GetWorker(WorkerId) == nil then
+        WorkerId = AutoMineFactoryConfig.GetFirstWorkerId()
+    end
+    local Worker = AutoMineFactoryConfig.GetWorker(WorkerId) or {}
+    local TotalPerCycle = AutoMineFactoryConfig.GetTotalOreCountPerCycle(WorkerId)
+    local bPrecondMet, PrecondHint = CheckAutoMineFactoryPreconditions(self)
+    local bKeepJade = self.bAutoMineFactoryKeepJade == true
+    -- 预估售卖价（用于 READY 状态下展示给玩家）
+    local EstimatedGold = 0
+    if Cycle.State == AMF_STATE_READY and type(Cycle.Rewards) == "table" and not bKeepJade then
+        if not bClientCycle then
+            local OreG, JadeG = EstimateAutoMineSellValue(self, Cycle.Rewards)
+            EstimatedGold = OreG + JadeG
+            Cycle.EstimatedSellGold = EstimatedGold
+            Cycle.OreSellGold = OreG
+            Cycle.JadeAppraisedGold = JadeG
+        else
+            EstimatedGold = math.floor(tonumber(Cycle.EstimatedSellGold) or 0)
+        end
+    end
+    return {
+        bUnlocked = IsAutoMineFactoryUnlocked(self),
+        bPreconditionsMet = bPrecondMet,
+        PreconditionHint = tostring(PrecondHint or ""),
+        UnlockCost = math.floor(tonumber(AutoMineFactoryConfig.UnlockCost) or 500000),
+        GoldCount = GetGoldCount(self),
+        WorkerId = WorkerId,
+        WorkerName = Worker.Name or "?",
+        WorkerDesc = Worker.Desc or "",
+        BonusOreCount = math.floor(tonumber(Worker.BonusOreCount) or 0),
+        MinMineLevel = Worker.MinMineLevel or 1,
+        MaxMineLevel = Worker.MaxMineLevel or 1,
+        CycleSec = math.floor(tonumber(AutoMineFactoryConfig.CycleSec) or 60),
+        BaseCount = math.floor(tonumber(AutoMineFactoryConfig.BaseOreCountPerCycle) or 60),
+        TotalPerCycle = TotalPerCycle,
+        bKeepJade = bKeepJade,
+        State = Cycle.State or AMF_STATE_IDLE,
+        CycleWorkerId = Cycle.WorkerId or 0,
+        EndTime = Cycle.EndTime or 0,
+        RemainingSec = RemainingSec,
+        RewardTotal = GetAutoMineFactoryRewardTotal(Cycle.Rewards),
+        RewardSummary = AutoMineFactoryConfig.FormatRewards(Cycle.Rewards or {}),
+        EstimatedSellGold = EstimatedGold,
+        LastMsg = self.AutoMineFactoryLastMsg or "",
+    }
+end
+
+function UGCPlayerController:Client_AutoMineFactoryNotify(Msg)
+    Msg = tostring(Msg or "")
+    self.AutoMineFactoryLastMsg = Msg
+    ugcprint("[AutoMineFactory] Notify: " .. Msg)
+    if self.OnAutoMineFactoryNotify then
+        pcall(self.OnAutoMineFactoryNotify, Msg)
+    end
+end
+
+function UGCPlayerController:Client_AutoMineFactoryUnlocked()
+    self.bAutoMineFactoryUnlocked = true
+    if self.OnAutoMineFactoryUnlocked then
+        pcall(self.OnAutoMineFactoryUnlocked)
+    end
+end
+
+function UGCPlayerController:Client_AutoMineFactoryCycleSync(
+    State, WorkerId, EndTime, RewardTotal, RewardSummary, RemainingSec, EstimatedSellGold, bKeepJade)
+    local SyncRemaining = tonumber(RemainingSec)
+    if SyncRemaining == nil then
+        SyncRemaining = math.max(0, math.floor((tonumber(EndTime) or 0) - NowSec()))
+    end
+    self.ClientAutoMineFactoryCycle = {
+        State = math.floor(tonumber(State) or AMF_STATE_IDLE),
+        WorkerId = math.floor(tonumber(WorkerId) or 0),
+        EndTime = math.floor(tonumber(EndTime) or 0),
+        RewardTotal = math.floor(tonumber(RewardTotal) or 0),
+        RewardSummary = tostring(RewardSummary or ""),
+        EstimatedSellGold = math.floor(tonumber(EstimatedSellGold) or 0),
+        SyncRemainingSec = math.max(0, math.floor(SyncRemaining)),
+        SyncLocalTimeSec = LocalClockSec(),
+    }
+    self.bAutoMineFactoryKeepJade = (bKeepJade == true)
+    if self.OnAutoMineFactoryStateChanged then
+        pcall(self.OnAutoMineFactoryStateChanged)
+    end
+end
+
+function UGCPlayerController:Client_AutoMineFactoryKeepJadeSync(bKeep)
+    self.bAutoMineFactoryKeepJade = (bKeep == true)
+    if self.OnAutoMineFactoryKeepJadeToggled then
+        pcall(self.OnAutoMineFactoryKeepJadeToggled)
+    end
+end
+
+function UGCPlayerController:Client_AutoMineFactoryWorkerSync(WorkerId)
+    self.AutoMineFactoryWorkerId = math.floor(tonumber(WorkerId) or 0)
+    if self.OnAutoMineFactoryWorkerChanged then
+        pcall(self.OnAutoMineFactoryWorkerChanged)
+    end
+end
+
+function UGCPlayerController:Server_UnlockAutoMineFactory()
+    if not UGCGameSystem.IsServer() then return end
+    if IsAutoMineFactoryUnlocked(self) then
+        InvokeClient(self, "Client_AutoMineFactoryUnlocked")
+        InvokeClient(self, "Client_AutoMineFactoryNotify", "全自动采矿工厂已解锁")
+        SyncAutoMineFactoryCycleToClient(self)
+        return
+    end
+    local PrecondOk, PrecondHint = CheckAutoMineFactoryPreconditions(self)
+    if not PrecondOk then
+        InvokeClient(self, "Client_AutoMineFactoryNotify", "前置条件未达成：" .. tostring(PrecondHint))
+        return
+    end
+    local Cost = math.floor(tonumber(AutoMineFactoryConfig.UnlockCost) or 500000)
+    if not TryRemoveGold(self, Cost) then
+        InvokeClient(self, "Client_AutoMineFactoryNotify", "金币不足，解锁需要 " .. tostring(Cost))
+        return
+    end
+    self.bAutoMineFactoryUnlocked = true
+    ugcprint("[AutoMineFactory] 全自动采矿工厂已解锁，扣费 " .. tostring(Cost))
+    InvokeClient(self, "Client_AutoMineFactoryUnlocked")
+    InvokeClient(self, "Client_AutoMineFactoryNotify", "解锁成功！可启动自动采矿周期")
+    SyncAutoMineFactoryCycleToClient(self)
+end
+
+function UGCPlayerController:Server_StartAutoMineFactory()
+    if not UGCGameSystem.IsServer() then return end
+    if not IsAutoMineFactoryUnlocked(self) then
+        InvokeClient(self, "Client_AutoMineFactoryNotify",
+            "请先解锁全自动采矿工厂（" .. tostring(AutoMineFactoryConfig.UnlockCost or 500000) .. " 金币）")
+        return
+    end
+    local WorkerId = math.floor(tonumber(self.AutoMineFactoryWorkerId) or AutoMineFactoryConfig.GetFirstWorkerId())
+    local Cycle = EnsureAutoMineFactoryCycle(self)
+    RefreshAutoMineFactoryCycleState(Cycle)
+    if Cycle.State == AMF_STATE_RUNNING then
+        local Remaining = math.max(0, math.floor((tonumber(Cycle.EndTime) or 0) - NowSec()))
+        InvokeClient(self, "Client_AutoMineFactoryNotify",
+            "采矿周期进行中，剩余 " .. AutoMineFactoryConfig.FormatRemainingTime(Remaining))
+        SyncAutoMineFactoryCycleToClient(self)
+        return
+    end
+    if Cycle.State == AMF_STATE_READY then
+        InvokeClient(self, "Client_AutoMineFactoryNotify", "已有产出待处理，请先领取或售卖")
+        SyncAutoMineFactoryCycleToClient(self)
+        return
+    end
+    if not self.bAutoMineRandomSeeded then
+        self.bAutoMineRandomSeeded = true
+        math.randomseed(NowSec() + GetGoldCount(self) + WorkerId)
+    end
+    local Rewards = AutoMineFactoryConfig.RollCycleRewards(WorkerId)
+    if type(Rewards) ~= "table" then
+        InvokeClient(self, "Client_AutoMineFactoryNotify", "矿物池配置错误，请稍后重试")
+        return
+    end
+    -- 计算预估售卖总值（玉石不保留时展示）
+    local EstimatedSellGold = 0
+    if self.bAutoMineFactoryKeepJade ~= true then
+        local OreG, JadeG = EstimateAutoMineSellValue(self, Rewards)
+        EstimatedSellGold = OreG + JadeG
+    end
+    Cycle.State = AMF_STATE_RUNNING
+    Cycle.WorkerId = WorkerId
+    Cycle.StartTime = NowSec()
+    Cycle.EndTime = NowSec() + math.floor(tonumber(AutoMineFactoryConfig.CycleSec) or 60)
+    Cycle.Rewards = Rewards
+    Cycle.EstimatedSellGold = EstimatedSellGold
+    local Worker = AutoMineFactoryConfig.GetWorker(WorkerId) or {}
+    local Msg = string.format(
+        "采矿周期已启动：%s，每%s产出约%d个矿物（含1~%d级），玉石模式：%s",
+        tostring(Worker.Name or "矿工"),
+        AutoMineFactoryConfig.FormatRemainingTime(AutoMineFactoryConfig.CycleSec or 60),
+        AutoMineFactoryConfig.GetTotalOreCountPerCycle(WorkerId),
+        Worker.MaxMineLevel or 1,
+        self.bAutoMineFactoryKeepJade and "保留入库" or "自动鉴定售卖"
+    )
+    ugcprint("[AutoMineFactory] " .. Msg)
+    InvokeClient(self, "Client_AutoMineFactoryNotify", Msg)
+    SyncAutoMineFactoryCycleToClient(self)
+end
+
+function UGCPlayerController:Server_CollectAutoMineFactory()
+    if not UGCGameSystem.IsServer() then return end
+    if not IsAutoMineFactoryUnlocked(self) then
+        InvokeClient(self, "Client_AutoMineFactoryNotify", "请先解锁全自动采矿工厂")
+        return
+    end
+    local Cycle = EnsureAutoMineFactoryCycle(self)
+    RefreshAutoMineFactoryCycleState(Cycle)
+    if Cycle.State == AMF_STATE_IDLE then
+        InvokeClient(self, "Client_AutoMineFactoryNotify", "当前没有产出，请先启动采矿周期")
+        return
+    end
+    if Cycle.State == AMF_STATE_RUNNING then
+        local Remaining = math.max(0, math.floor((tonumber(Cycle.EndTime) or 0) - NowSec()))
+        InvokeClient(self, "Client_AutoMineFactoryNotify",
+            "采矿进行中，剩余 " .. AutoMineFactoryConfig.FormatRemainingTime(Remaining))
+        SyncAutoMineFactoryCycleToClient(self)
+        return
+    end
+    local Rewards = Cycle.Rewards or {}
+    local Total = GetAutoMineFactoryRewardTotal(Rewards)
+    if Total <= 0 then
+        self.AutoMineFactoryCycle = nil
+        InvokeClient(self, "Client_AutoMineFactoryNotify", "产出为空，已重置")
+        SyncAutoMineFactoryCycleToClient(self)
+        return
+    end
+    -- KeepJade=true：玉石和其他矿石都发入背包（背包装不下就留着下次领）
+    local bKeepJade = self.bAutoMineFactoryKeepJade == true
+    local Entries = BuildAutoMineRewardEntries(Rewards, true) -- 领取模式无论如何都发所有
+    local Delivered, Remaining, _ = TryDeliverAutoMineRewards(self, Entries)
+    local DeliveredTotal = GetAutoMineFactoryRewardTotal(Delivered)
+    local RemainingTotal = GetAutoMineFactoryRewardTotal(Remaining)
+    local Worker = AutoMineFactoryConfig.GetWorker(Cycle.WorkerId or 0) or {}
+    local Summary = AutoMineFactoryConfig.FormatRewards(Delivered)
+    if RemainingTotal > 0 then
+        Cycle.Rewards = Remaining
+        Cycle.State = AMF_STATE_READY
+        local RemainingSummary = AutoMineFactoryConfig.FormatRewards(Remaining)
+        local Msg = string.format(
+            "只领取了%d/%d个：%s；背包不足，剩余%d个待领：%s",
+            DeliveredTotal, Total, Summary ~= "" and Summary or "-",
+            RemainingTotal, RemainingSummary ~= "" and RemainingSummary or "-"
+        )
+        ugcprint("[AutoMineFactory] " .. Msg)
+        InvokeClient(self, "Client_AutoMineFactoryNotify", Msg)
+        SyncAutoMineFactoryCycleToClient(self)
+        return
+    end
+    self.AutoMineFactoryCycle = nil
+    local Msg = string.format(
+        "%s产出%d个矿物：%s，已放入背包",
+        tostring(Worker.Name or "工厂"),
+        Total,
+        Summary ~= "" and Summary or "-"
+    )
+    ugcprint("[AutoMineFactory] " .. Msg)
+    InvokeClient(self, "Client_AutoMineFactoryNotify", Msg)
+    SyncAutoMineFactoryCycleToClient(self)
+end
+
+function UGCPlayerController:Server_SellAutoMineFactory()
+    if not UGCGameSystem.IsServer() then return end
+    if not IsAutoMineFactoryUnlocked(self) then
+        InvokeClient(self, "Client_AutoMineFactoryNotify", "请先解锁全自动采矿工厂")
+        return
+    end
+    local Cycle = EnsureAutoMineFactoryCycle(self)
+    RefreshAutoMineFactoryCycleState(Cycle)
+    if Cycle.State ~= AMF_STATE_READY then
+        if Cycle.State == AMF_STATE_RUNNING then
+            local Remaining = math.max(0, math.floor((tonumber(Cycle.EndTime) or 0) - NowSec()))
+            InvokeClient(self, "Client_AutoMineFactoryNotify",
+                "采矿进行中，剩余 " .. AutoMineFactoryConfig.FormatRemainingTime(Remaining))
+        else
+            InvokeClient(self, "Client_AutoMineFactoryNotify", "当前没有产出可售卖")
+        end
+        SyncAutoMineFactoryCycleToClient(self)
+        return
+    end
+    local Rewards = Cycle.Rewards or {}
+    local Total = GetAutoMineFactoryRewardTotal(Rewards)
+    if Total <= 0 then
+        self.AutoMineFactoryCycle = nil
+        InvokeClient(self, "Client_AutoMineFactoryNotify", "产出为空，已重置")
+        SyncAutoMineFactoryCycleToClient(self)
+        return
+    end
+    -- 售卖模式：扣除所有矿石+玉石；玉石走工厂快速鉴定（不扣3000费）；矿石按 OreRecycleConfig 售价回收
+    local OreGold, JadeGold = EstimateAutoMineSellValue(self, Rewards)
+    local TotalGold = OreGold + JadeGold
+    -- 先把所有矿石/玉石从背包里扣除？——注意：本设施的产出还没进入背包，
+    -- 直接在 Cycle.Rewards 中"虚拟"持有，因此售卖即"销毁虚拟产出 + 加金币"。
+    -- 避免重复收益：把 Cycle.Rewards 清空即可。
+    if TotalGold > 0 then
+        if not TryAddItems(self, GOLD_ITEM_ID or AutoMineFactoryConfig.GoldItemId or 8310002, TotalGold) then
+            InvokeClient(self, "Client_AutoMineFactoryNotify", "发放金币失败，请稍后重试")
+            SyncAutoMineFactoryCycleToClient(self)
+            return
+        end
+    end
+    self.AutoMineFactoryCycle = nil
+    local Worker = AutoMineFactoryConfig.GetWorker(Cycle.WorkerId or 0) or {}
+    local Msg = string.format(
+        "售卖完成：%s产出共%d个，矿石回收+%d金，玉石自动鉴定+%d金，合计+%d金",
+        tostring(Worker.Name or "工厂"),
+        Total,
+        OreGold, JadeGold, TotalGold
+    )
+    ugcprint("[AutoMineFactory] " .. Msg)
+    InvokeClient(self, "Client_AutoMineFactoryNotify", Msg)
+    SyncAutoMineFactoryCycleToClient(self)
+end
+
+function UGCPlayerController:Server_SetAutoMineFactoryWorker(WorkerId)
+    if not UGCGameSystem.IsServer() then return end
+    if not IsAutoMineFactoryUnlocked(self) then
+        InvokeClient(self, "Client_AutoMineFactoryNotify", "请先解锁全自动采矿工厂")
+        return
+    end
+    WorkerId = math.floor(tonumber(WorkerId) or 0)
+    if AutoMineFactoryConfig.GetWorker(WorkerId) == nil then
+        InvokeClient(self, "Client_AutoMineFactoryNotify", "矿工档位无效")
+        return
+    end
+    local Cycle = EnsureAutoMineFactoryCycle(self)
+    if Cycle.State == AMF_STATE_RUNNING then
+        InvokeClient(self, "Client_AutoMineFactoryNotify", "本周期进行中，下个周期生效新矿工档位")
+        SyncAutoMineFactoryCycleToClient(self)
+        return
+    end
+    self.AutoMineFactoryWorkerId = WorkerId
+    local Worker = AutoMineFactoryConfig.GetWorker(WorkerId) or {}
+    local Msg = string.format("已切换到%s：%s", tostring(Worker.Name or "矿工"), tostring(Worker.Desc or ""))
+    ugcprint("[AutoMineFactory] " .. Msg)
+    InvokeClient(self, "Client_AutoMineFactoryNotify", Msg)
+    InvokeClient(self, "Client_AutoMineFactoryWorkerSync", WorkerId)
+    SyncAutoMineFactoryCycleToClient(self)
+end
+
+function UGCPlayerController:Server_ToggleAutoMineFactoryKeepJade()
+    if not UGCGameSystem.IsServer() then return end
+    if not IsAutoMineFactoryUnlocked(self) then
+        InvokeClient(self, "Client_AutoMineFactoryNotify", "请先解锁全自动采矿工厂")
+        return
+    end
+    self.bAutoMineFactoryKeepJade = not (self.bAutoMineFactoryKeepJade == true)
+    local Msg
+    if self.bAutoMineFactoryKeepJade then
+        Msg = "玉石模式已切换为：保留入库（产出未鉴定玉石，领取后去鉴定所或收藏室使用）"
+    else
+        Msg = "玉石模式已切换为：自动鉴定售卖（售卖时玉石按工厂快速鉴定估价，不扣鉴定费）"
+    end
+    ugcprint("[AutoMineFactory] " .. Msg)
+    InvokeClient(self, "Client_AutoMineFactoryNotify", Msg)
+    InvokeClient(self, "Client_AutoMineFactoryKeepJadeSync", self.bAutoMineFactoryKeepJade)
+    SyncAutoMineFactoryCycleToClient(self)
+end
+
+function UGCPlayerController:RequestUnlockAutoMineFactory()
+    InvokeServer(self, "Server_UnlockAutoMineFactory")
+end
+
+function UGCPlayerController:RequestStartAutoMineFactory()
+    InvokeServer(self, "Server_StartAutoMineFactory")
+end
+
+function UGCPlayerController:RequestCollectAutoMineFactory()
+    InvokeServer(self, "Server_CollectAutoMineFactory")
+end
+
+function UGCPlayerController:RequestSellAutoMineFactory()
+    InvokeServer(self, "Server_SellAutoMineFactory")
+end
+
+function UGCPlayerController:RequestSetAutoMineFactoryWorker(WorkerId)
+    InvokeServer(self, "Server_SetAutoMineFactoryWorker", WorkerId)
+end
+
+function UGCPlayerController:RequestToggleAutoMineFactoryKeepJade()
+    InvokeServer(self, "Server_ToggleAutoMineFactoryKeepJade")
+end
+
 --- ========== 采矿车维修处 ==========
 
 local VEHICLE_STATE_READY = 0
@@ -4128,7 +4801,11 @@ function UGCPlayerController:GetAvailableServerRPCs()
         "Server_UnlockMineTeleport", "Server_TeleportToMineZone", "Server_ReturnToSpawn",
         "Server_UnlockSmeltingPlant", "Server_UpgradeSmeltingPlant", "Server_UnlockFurnace",
         "Server_StartSmelt", "Server_SkipSmelt", "Server_CollectSmelt",
-        "Server_RecycleOre","Server_UpgradeWarehouse","Server_BuyTool","Server_UpgradeBackpack","Server_QueryBackpackLevel"
+        "Server_UnlockTalentMarket", "Server_HireTalentWorker", "Server_CollectTalentJob",
+        "Server_RecycleOre","Server_UpgradeWarehouse","Server_BuyTool","Server_UpgradeBackpack","Server_QueryBackpackLevel",
+        "Server_UnlockAutoMineFactory", "Server_StartAutoMineFactory",
+        "Server_CollectAutoMineFactory", "Server_SellAutoMineFactory",
+        "Server_SetAutoMineFactoryWorker", "Server_ToggleAutoMineFactoryKeepJade"
 end
 
 function UGCPlayerController:GetAvailableClientRPCs()
@@ -4145,7 +4822,10 @@ function UGCPlayerController:GetAvailableClientRPCs()
         "Client_VehicleRepairNotify", "Client_VehicleRepairUnlocked", "Client_VehicleRepairState", "Client_ForceStopMineCarMode",
         "Client_OreRecycleNotify",
         "Client_WarehouseNotify",
-        "Client_ShopNotify","Client_BackpackLevelSync"
+        "Client_ShopNotify","Client_BackpackLevelSync",
+        "Client_AutoMineFactoryNotify", "Client_AutoMineFactoryUnlocked",
+        "Client_AutoMineFactoryCycleSync", "Client_AutoMineFactoryKeepJadeSync",
+        "Client_AutoMineFactoryWorkerSync"
 end
 
 -- ============ 矿工百货商店 RPC ============

@@ -1,4 +1,5 @@
 ---@class WBP_RechargeFloatingBtn_C:UUserWidget
+---@field Btn_Rank UButton
 ---@field Btn_Recharge UButton
 ---@field Btn_Task UButton
 --Edit Below--
@@ -7,6 +8,17 @@ local TASK_MANAGER_REQUIRE_PATH = 'ExtendResource.TaskTemplate.OfficialPackage.S
 local TASK_MAIN_UI_PATH = 'ExtendResource/TaskTemplate/OfficialPackage/Asset/Task/Arts_UI/UIBP/UGC_TaskMain_UIBP.UGC_TaskMain_UIBP_C'
 local TASK_LEVEL_LINE_UI_PATH = 'ExtendResource/TaskTemplate/OfficialPackage/Asset/Task/Arts_UI/UIBP/UGC_LevelTask_UIBP.UGC_LevelTask_UIBP_C'
 local TASK_PERCENT_LINE_UI_PATH = 'ExtendResource/TaskTemplate/OfficialPackage/Asset/Task/Arts_UI/UIBP/UGC_DailyTask_UIBP.UGC_DailyTask_UIBP_C'
+
+local RANKING_LIST_MANAGER_REQUIRE_PATH = 'ExtendResource.RankingList.OfficialPackage.Script.RankingList.RankingListManager'
+local RANK_MAIN_UI_PATH = 'ExtendResource/RankingList/OfficialPackage/Asset/RankingList/Arts_UI/UIBP/UGC_RankingList_Main_UIBP.UGC_RankingList_Main_UIBP_C'
+local function LoadRankingListManager()
+    local Ok = pcall(UGCGameSystem.UGCRequire, RANKING_LIST_MANAGER_REQUIRE_PATH)
+    if Ok and RankingListManager then
+        return RankingListManager
+    end
+    ugcprint('[RankBtn] RankingListManager require failed')
+    return nil
+end
 local function LoadTaskManager()
     local Ok = pcall(UGCGameSystem.UGCRequire, TASK_MANAGER_REQUIRE_PATH)
     if Ok and TaskManager then
@@ -34,6 +46,16 @@ function WBP_RechargeFloatingBtn:Construct()
     end
     if self.Txt_TaskLabel and self.Txt_TaskLabel.SetText then
         self.Txt_TaskLabel:SetText("任务")
+    end
+
+    if self.Btn_Rank and self.Btn_Rank.OnClicked then
+        self.Btn_Rank.OnClicked:Add(self.OnBtnRankClicked, self)
+        ugcprint('[RankBtn] Button bound OK')
+    else
+        ugcprint('[RankBtn] Btn_Rank not found in blueprint')
+    end
+    if self.Txt_RankLabel and self.Txt_RankLabel.SetText then
+        self.Txt_RankLabel:SetText("排行")
     end
 end
 function WBP_RechargeFloatingBtn:CreateMainUI()
@@ -183,16 +205,95 @@ function WBP_RechargeFloatingBtn:OnBtnTaskClicked()
         if UI.InitUI then
             pcall(UI.InitUI, UI)
         end
-        UI:SetVisibility(ESlateVisibility.SelfHitTestInvisible)
+        UI:SetVisibility(ESlateVisibility.Visible)
     end
     ugcprint('[TaskBtn] opened')
 end
+function WBP_RechargeFloatingBtn:CreateRankMainUI()
+    local RM = LoadRankingListManager()
+    if not RM then
+        return
+    end
+    if self.RankMainUI and UGCObjectUtility.IsObjectValid(self.RankMainUI) then
+        return
+    end
+    local PC = UGCGameSystem.GetLocalPlayerController()
+    if not PC then
+        ugcprint('[RankBtn] LocalPC nil')
+        return
+    end
+    local Comp = nil
+    if RM.GetRankingListComponent then
+        local OkC, C = pcall(RM.GetRankingListComponent, RM, PC)
+        if OkC then
+            Comp = C
+        end
+    end
+    if Comp and UGCObjectUtility.IsObjectValid(Comp) and Comp.RankingListMainUI and UGCObjectUtility.IsObjectValid(Comp.RankingListMainUI) then
+        self.RankMainUI = Comp.RankingListMainUI
+        ugcprint('[RankBtn] use component RankingListMainUI')
+        return
+    end
+    local p = UGCGameSystem.GetUGCResourcesFullPath(RANK_MAIN_UI_PATH)
+    if not p or p == '' then
+        ugcprint('[RankBtn] RankMainUI path not found')
+        return
+    end
+    local cls = UE.LoadClass(p)
+    if not cls then
+        ugcprint('[RankBtn] RankMainUI LoadClass failed')
+        return
+    end
+    local UI = UserWidget.NewWidgetObjectBP(PC, cls)
+    if not UGCObjectUtility.IsObjectValid(UI) then
+        ugcprint('[RankBtn] RankMainUI create failed')
+        return
+    end
+    self.RankMainUI = UI
+    UI:AddToViewport(10000)
+    UI:SetVisibility(ESlateVisibility.Collapsed)
+    if Comp and Comp.RankingListMainUI == nil then
+        Comp.RankingListMainUI = UI
+    end
+    ugcprint('[RankBtn] RankMainUI created manually')
+end
+function WBP_RechargeFloatingBtn:OnBtnRankClicked()
+    ugcprint('[RankBtn] click')
+    local RM = LoadRankingListManager()
+    if not RM then
+        return
+    end
+    self:CreateRankMainUI()
+    local UI = self.RankMainUI
+    if not UI or not UGCObjectUtility.IsObjectValid(UI) then
+        ugcprint('[RankBtn] RankMainUI still nil')
+        return
+    end
+    if UI:IsVisible() then
+        if UI.Close then
+            pcall(UI.Close, UI)
+        else
+            UI:SetVisibility(ESlateVisibility.Collapsed)
+        end
+        ugcprint('[RankBtn] closed')
+        return
+    end
+    if UI.InitUI then
+        pcall(UI.InitUI, UI)
+    end
+    UI:SetVisibility(ESlateVisibility.SelfHitTestInvisible)
+    ugcprint('[RankBtn] opened')
+end
+
 function WBP_RechargeFloatingBtn:Destruct()
     if self.Btn_Recharge and self.Btn_Recharge.OnClicked then
         self.Btn_Recharge.OnClicked:Remove(self.OnBtnRechargeClicked, self)
     end
     if self.Btn_Task and self.Btn_Task.OnClicked then
         self.Btn_Task.OnClicked:Remove(self.OnBtnTaskClicked, self)
+    end
+    if self.Btn_Rank and self.Btn_Rank.OnClicked then
+        self.Btn_Rank.OnClicked:Remove(self.OnBtnRankClicked, self)
     end
 end
 return WBP_RechargeFloatingBtn

@@ -22,7 +22,7 @@ local ShopV2ProductConfig = {
         ProductID = 9000003,
         Name = "满级矿工成长礼包",
         Desc = "高级采矿车x1 + 背包升至Lv10 + 玉矿石x25",
-        Items = { { 8310029, 1 } },
+        Items = { { 8310023, 1 } },
         BackpackLevel = 10,
         JadeCount = 25,
     },

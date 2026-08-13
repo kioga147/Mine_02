@@ -285,7 +285,7 @@ function TaskTemplateComponent:OpenTaskMainUI()
             end
         end
         self.TaskMainUI:InitUI();
-        self.TaskMainUI:SetVisibility(ESlateVisibility.SelfHitTestInvisible);
+        self.TaskMainUI:SetVisibility(ESlateVisibility.Visible);
     end
 end
 

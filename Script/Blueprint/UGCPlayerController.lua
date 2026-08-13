@@ -96,6 +96,18 @@ do
     end
 end
 
+local TitleConfig = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire("Script.Common.TitleConfig")
+    end)
+    if Ok and type(Mod) == "table" then
+        TitleConfig = Mod
+    else
+        TitleConfig = {}
+    end
+end
+
 local WarehouseConfig = nil
 do
     local Ok, Mod = pcall(function()
@@ -1026,12 +1038,6 @@ function UGCPlayerController:ReceiveBeginPlay()
             return
         end
         local VIM = UGCGamePartSystem.VirtualItemManager.GetGlobalActor()
-        if not VIM or not VIM.AddVirtualItem then
-            UGCTimerUtility.CreateLuaTimer(2.0, function()
-                GiveTestCurrency(Attempt + 1)
-            end, false)
-            return
-        end
         local Have = 0
         if VIM.GetItemNum then
             local OkNum, Num = pcall(VIM.GetItemNum, VIM, TEST_COIN_ITEM_ID, self)
@@ -1062,6 +1068,10 @@ function UGCPlayerController:ReceiveBeginPlay()
         ugcprint("[背包] 容量上限=" .. tostring(OkMaxCap and MaxCap) .. "（永久目标 240）")
         TryGiveStarterKit(self, 1)
         self:BindShopV2Gift(1)
+        pcall(function()
+            self:BindTitleItemListener(1)
+            self:InitTitleState(1)
+        end)
     end
 
     -- 商店模板V2：通过 AddToViewport 添加"打开商城"调试按钮
@@ -1456,6 +1466,7 @@ function UGCPlayerController:Server_RevealJadeCell(Index)
         ValueInt = 0
     end
     ugcprint(string.format("[Jade] Reveal cell=%d level=%d value=%d", Index, Level, ValueInt))
+    self:Server_UpdateJadeTitleTask(ValueInt)
     InvokeClient(self, "Client_JadeCellRevealed", Index, Level, ValueInt)
 end
 
@@ -1575,6 +1586,7 @@ function UGCPlayerController:Server_QuickAppraiseJade()
         return
     end
     local Roll = math.random(0, 10000)
+    self:Server_UpdateJadeTitleTask(Roll)
     if Roll > 0 then
         UGCBackpackSystemV2.AddItemV2(self, GOLD_ITEM_ID, Roll)
     end
@@ -4002,7 +4014,7 @@ function UGCPlayerController:GetAvailableServerRPCs()
         "Server_UnlockMineTeleport", "Server_TeleportToMineZone", "Server_ReturnToSpawn",
         "Server_UnlockSmeltingPlant", "Server_UpgradeSmeltingPlant", "Server_UnlockFurnace",
         "Server_StartSmelt", "Server_SkipSmelt", "Server_CollectSmelt",
-        "Server_RecycleOre","Server_UpgradeWarehouse","Server_BuyTool","Server_UpgradeBackpack","Server_QueryBackpackLevel"
+        "Server_RecycleOre","Server_UpgradeWarehouse","Server_BuyTool","Server_UpgradeBackpack","Server_QueryBackpackLevel","Server_SwitchTitle"
 end
 
 function UGCPlayerController:GetAvailableClientRPCs()
@@ -4019,7 +4031,7 @@ function UGCPlayerController:GetAvailableClientRPCs()
         "Client_VehicleRepairNotify", "Client_VehicleRepairUnlocked", "Client_VehicleRepairState", "Client_ForceStopMineCarMode",
         "Client_OreRecycleNotify",
         "Client_WarehouseNotify",
-        "Client_ShopNotify","Client_BackpackLevelSync"
+        "Client_ShopNotify","Client_BackpackLevelSync","Client_TitleNotify","Client_EnsureTitleBarAdded","Client_EnsureAllTitleBars","Client_SyncTitleState"
 end
 
 -- ============ 矿工百货商店 RPC ============
@@ -4289,7 +4301,6 @@ function UGCPlayerController:GiveShopGift(Gift, Num)
             local OkS, Stack = pcall(UGCItemSystemV2.GetItemMaxNumberOfStacksV2, JADE_ITEM_ID)
             ugcprint("[商店礼包] 玉矿石(8310011) 最大堆叠=" .. tostring(Stack))
         end
-        table.insert(Parts, tostring(RealJade) .. "x玉矿石")
     end
 
     if Gift.RandomOreCount and Gift.RandomOreCount > 0 then
@@ -4309,7 +4320,6 @@ function UGCPlayerController:GiveShopGift(Gift, Num)
         if Gift.Flag == "bAutoPickup" then
             self:StartAutoPickup()
         end
-        self[Gift.Flag] = true
     end
 
     local Msg = "获得" .. Gift.Name
@@ -4574,6 +4584,7 @@ function UGCPlayerController:UpdateWealthRankScore()
             GoldCount = math.floor(tonumber(Cnt) or 0)
         end
     end
+    self:Server_RefreshTitleProgress(GoldCount)
     if GoldCount == self._LastRankScore then
         return
     end
@@ -4596,6 +4607,711 @@ function UGCPlayerController:UpdateWealthRankScore()
         ugcprint(string.format('[财富榜] 更新排行榜分数: UID=%d, Score=%d', UID, GoldCount))
     else
         ugcprint(string.format('[财富榜] 更新排行榜分数失败: %s', tostring(Err)))
+    end
+end
+
+-- ============ 成就称号系统 ============
+
+local TITLE_BAR_WIDGET_PATH = 'Asset/Blueprint/Prefabs/UI/WBP_TitleBar.WBP_TitleBar_C'
+local TITLE_BAR_OFFSET = { X = 0, Y = 0, Z = 180 }
+local TITLE_MINE_COUNT_ITEM_ID = 1057
+-- 当前阶段只验证任务进度与发奖，自动佩戴/头顶 UI 后续阶段再开启
+local TITLE_AUTO_EQUIP_ENABLED = true
+local TITLE_BAR_UI_ENABLED = true
+
+local function GetVirtualItemManagerSafe()
+    if UGCGamePartSystem and UGCGamePartSystem.VirtualItemManager then
+        local Ok, V = pcall(function()
+            return UGCGamePartSystem.VirtualItemManager.GetGlobalActor()
+        end)
+        if Ok then
+            return V
+        end
+    end
+    return nil
+end
+
+function UGCPlayerController:GetUnlockedTitleIDs()
+    local IDs = {}
+    if not TitleConfig or not TitleConfig.GetAllTitles then
+        return IDs
+    end
+    local VIM = GetVirtualItemManagerSafe()
+    if not VIM or not VIM.GetItemNum then
+        if self and self.ClientUnlockedTitleIDs and type(self.ClientUnlockedTitleIDs) == "table" then
+            for _, ID in ipairs(self.ClientUnlockedTitleIDs) do
+                table.insert(IDs, math.floor(tonumber(ID) or 0))
+            end
+        end
+        return IDs
+    end
+    for _, TitleID in ipairs(TitleConfig.GetAllTitles()) do
+        local Entry = TitleConfig.Get(TitleID)
+        if Entry then
+            local OkNum, Num = pcall(VIM.GetItemNum, VIM, Entry.UnlockItemID, self)
+            if OkNum and math.floor(tonumber(Num) or 0) > 0 then
+                table.insert(IDs, TitleID)
+            end
+        end
+    end
+    return IDs
+end
+
+function UGCPlayerController:IsTitleUnlocked(TitleID)
+    TitleID = math.floor(tonumber(TitleID) or 0)
+    local IDs = self:GetUnlockedTitleIDs()
+    for _, ID in ipairs(IDs) do
+        if ID == TitleID then
+            return true
+        end
+    end
+    return false
+end
+
+function UGCPlayerController:GetCurrentTitleID()
+    local Pawn = GetPawnByControllerSafe(self)
+    if Pawn and Pawn.CurrentTitleID ~= nil then
+        return math.floor(tonumber(Pawn.CurrentTitleID) or 0)
+    end
+    return 0
+end
+
+function UGCPlayerController:GetTitleListForUI()
+    local List = {}
+    if not TitleConfig or not TitleConfig.GetAllTitles then
+        return List
+    end
+    local UnlockedMap = {}
+    for _, ID in ipairs(self:GetUnlockedTitleIDs()) do
+        UnlockedMap[ID] = true
+    end
+    local CurrentID = self:GetCurrentTitleID()
+    if CurrentID <= 0 and self.ClientCurrentTitleID then
+        CurrentID = math.floor(tonumber(self.ClientCurrentTitleID) or 0)
+    end
+    for _, TitleID in ipairs(TitleConfig.GetAllTitles()) do
+        local Entry = TitleConfig.Get(TitleID)
+        if Entry then
+            table.insert(List, {
+                TitleID = TitleID,
+                Name = Entry.Name,
+                Desc = Entry.Desc,
+                IconPath = Entry.IconPath,
+                Unlocked = UnlockedMap[TitleID] == true,
+                Equipped = TitleID == CurrentID,
+            })
+        end
+    end
+    return List
+end
+
+function UGCPlayerController:RequestSwitchTitle(TitleID)
+    TitleID = math.floor(tonumber(TitleID) or 0)
+    InvokeServer(self, "Server_SwitchTitle", TitleID)
+end
+
+function UGCPlayerController:Server_SwitchTitle(TitleID)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    TitleID = math.floor(tonumber(TitleID) or 0)
+    local Entry = TitleConfig and TitleConfig.Get and TitleConfig.Get(TitleID)
+    if not Entry then
+        InvokeClient(self, "Client_TitleNotify", "称号不存在")
+        return
+    end
+    if not self:IsTitleUnlocked(TitleID) then
+        InvokeClient(self, "Client_TitleNotify", "未解锁该称号")
+        return
+    end
+    if self:GetCurrentTitleID() == TitleID then
+        InvokeClient(self, "Client_TitleNotify", "已佩戴该称号")
+        return
+    end
+    local VIM = GetVirtualItemManagerSafe()
+    if not VIM or not VIM.RemoveVirtualItem or not VIM.AddVirtualItem then
+        InvokeClient(self, "Client_TitleNotify", "虚拟物品系统未就绪")
+        return
+    end
+    if TitleConfig.GetAllTitles then
+        for _, OtherID in ipairs(TitleConfig.GetAllTitles()) do
+            local Other = TitleConfig.Get(OtherID)
+            if Other and Other.EquipItemID then
+                local OkNum, Num = pcall(VIM.GetItemNum, VIM, Other.EquipItemID, self)
+                if OkNum and math.floor(tonumber(Num) or 0) > 0 then
+                    pcall(VIM.RemoveVirtualItem, VIM, self, Other.EquipItemID, math.floor(tonumber(Num) or 0))
+                end
+            end
+        end
+    end
+    pcall(VIM.AddVirtualItem, VIM, self, Entry.EquipItemID, 1)
+    local Pawn = GetPawnByControllerSafe(self)
+    if Pawn and UGCObjectUtility.IsObjectValid(Pawn) then
+        Pawn:SetCurrentTitleID(TitleID)
+    end
+    ugcprint(string.format("[称号] 切换成功: TitleID=%d Name=%s", TitleID, tostring(Entry.Name)))
+    InvokeClient(self, "Client_TitleNotify", "已佩戴称号：" .. tostring(Entry.Name))
+    InvokeClient(self, "Client_SyncTitleState", TitleID, table.concat(self:GetUnlockedTitleIDs(), ","))
+    self:NotifyAllClientsTitleChanged()
+end
+
+function UGCPlayerController:Client_TitleNotify(Msg)
+    Msg = tostring(Msg or "")
+    self.TitleLastMsg = Msg
+    ugcprint("[称号] Notify: " .. Msg)
+    if self.OnTitleNotify then
+        pcall(self.OnTitleNotify, Msg)
+    end
+end
+
+function UGCPlayerController:Client_SyncTitleState(CurrentID, UnlockedIDsStr)
+    self.ClientCurrentTitleID = math.floor(tonumber(CurrentID) or 0)
+    self.ClientUnlockedTitleIDs = {}
+    if type(UnlockedIDsStr) == "table" then
+        self.ClientUnlockedTitleIDs = UnlockedIDsStr
+    elseif type(UnlockedIDsStr) == "string" and UnlockedIDsStr ~= "" then
+        for Token in string.gmatch(UnlockedIDsStr, "([^,]+)") do
+            local ID = math.floor(tonumber(Token) or 0)
+            if ID > 0 then
+                table.insert(self.ClientUnlockedTitleIDs, ID)
+            end
+        end
+    end
+    ugcprint(string.format("[称号] 客户端状态同步: Current=%d Unlocked=%d",
+        self.ClientCurrentTitleID, #self.ClientUnlockedTitleIDs))
+    if self._OnTitleSwitched then
+        pcall(self._OnTitleSwitched, self.ClientCurrentTitleID)
+    end
+end
+
+function UGCPlayerController:Server_EquipTitleIfNone(TitleID)
+    if not UGCGameSystem.IsServer() then
+        return false
+    end
+    TitleID = math.floor(tonumber(TitleID) or 0)
+    if self:GetCurrentTitleID() ~= 0 then
+        return false
+    end
+    local Entry = TitleConfig and TitleConfig.Get and TitleConfig.Get(TitleID)
+    if not Entry then
+        return false
+    end
+    local VIM = GetVirtualItemManagerSafe()
+    if not VIM or not VIM.GetItemNum or not VIM.AddVirtualItem then
+        return false
+    end
+    local OkEquipNum, EquipNum = pcall(VIM.GetItemNum, VIM, Entry.EquipItemID, self)
+    if OkEquipNum and math.floor(tonumber(EquipNum) or 0) > 0 then
+        return false
+    end
+    pcall(VIM.AddVirtualItem, VIM, self, Entry.EquipItemID, 1)
+    local Pawn = GetPawnByControllerSafe(self)
+    if Pawn and UGCObjectUtility.IsObjectValid(Pawn) then
+        Pawn:SetCurrentTitleID(TitleID)
+    end
+    ugcprint(string.format("[称号] 自动佩戴首个解锁称号: TitleID=%d", TitleID))
+    return true
+end
+
+local function GetTaskManagerGlobalSafe()
+    if UGCGamePartSystem and UGCGamePartSystem.GetGamePartGlobalActor then
+        local Ok, TM = pcall(UGCGamePartSystem.GetGamePartGlobalActor, "TaskManager")
+        if Ok and TM then
+            return TM
+        end
+    end
+    return nil
+end
+
+function UGCPlayerController:GetTitleTaskIndex(TitleID)
+    TitleID = math.floor(tonumber(TitleID) or 0)
+    local TaskIndex = 0
+    if TitleConfig and TitleConfig.GetTaskIndex then
+        TaskIndex = math.floor(tonumber(TitleConfig.GetTaskIndex(TitleID)) or 0)
+    end
+    if TaskIndex <= 0 then
+        return nil
+    end
+    local TaskLineName = "成就"
+    if TitleConfig and TitleConfig.GetTaskLineName then
+        TaskLineName = TitleConfig.GetTaskLineName() or TaskLineName
+    end
+    return {
+        TaskLineName = TaskLineName,
+        PercentTaskIndex = TaskIndex,
+        LevelTaskLevelIndex = 0,
+        LevelTaskIndex = 0,
+    }
+end
+
+function UGCPlayerController:Server_UpdateTitleTaskProgress(TitleID, Progress, IsIncremental)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    TitleID = math.floor(tonumber(TitleID) or 0)
+    local Entry = TitleConfig and TitleConfig.Get and TitleConfig.Get(TitleID)
+    if not Entry then
+        return
+    end
+    local TM = GetTaskManagerGlobalSafe()
+    if not TM or not TM.UpdateTaskProgress then
+        ugcprint(string.format("[称号] 任务系统未就绪，跳过任务进度更新 TitleID=%d", TitleID))
+        return
+    end
+    local TaskIndex = self:GetTitleTaskIndex(TitleID)
+    if not TaskIndex then
+        return
+    end
+    Progress = math.max(0, math.floor(tonumber(Progress) or 0))
+    local Target = 0
+    if TitleConfig and TitleConfig.GetTaskTarget then
+        Target = math.floor(tonumber(TitleConfig.GetTaskTarget(TitleID)) or 0)
+    end
+    if Target > 0 then
+        Progress = math.min(Progress, Target)
+    end
+    local Ok, Err = pcall(TM.UpdateTaskProgress, TM, TaskIndex, self, Progress, IsIncremental == true)
+    if Ok then
+        ugcprint(string.format("[称号] 任务进度更新 TitleID=%d TaskIndex=%d Progress=%d Inc=%s",
+            TitleID, TaskIndex.PercentTaskIndex, Progress, tostring(IsIncremental == true)))
+    else
+        ugcprint(string.format("[称号] 任务进度更新失败 TitleID=%d Err=%s", TitleID, tostring(Err)))
+    end
+end
+
+function UGCPlayerController:Server_UpdateCashTitleProgress(GoldCount)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    GoldCount = math.floor(tonumber(GoldCount) or 0)
+    for _, TitleID in ipairs({ 1011, 1012, 1013 }) do
+        local Target = 0
+        if TitleConfig and TitleConfig.GetTaskTarget then
+            Target = math.floor(tonumber(TitleConfig.GetTaskTarget(TitleID)) or 0)
+        end
+        if Target > 0 then
+            self:Server_UpdateTitleTaskProgress(TitleID, GoldCount, false)
+        end
+    end
+end
+
+function UGCPlayerController:Server_RefreshTitleProgress(OptionalGoldCount)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    -- 閲戝竵浠诲姟杩涘害
+    local GoldCount = OptionalGoldCount
+    if GoldCount == nil then
+        GoldCount = 0
+        if UGCBackpackSystemV2 and UGCBackpackSystemV2.GetItemCountV2 then
+            local OkGold, Gold = pcall(UGCBackpackSystemV2.GetItemCountV2, self, GOLD_ITEM_ID)
+            if OkGold then
+                GoldCount = math.floor(tonumber(Gold) or 0)
+            end
+        end
+    end
+    self:Server_UpdateCashTitleProgress(GoldCount)
+    -- 采矿车任务进度
+    if UGCBackpackSystemV2 and UGCBackpackSystemV2.GetItemCountV2 then
+        for _, VehicleID in ipairs({8310023, 8310024, 8310025}) do
+            local OkCnt, Cnt = pcall(UGCBackpackSystemV2.GetItemCountV2, self, VehicleID)
+            if OkCnt and math.floor(tonumber(Cnt) or 0) > 0 then
+                self:Server_UpdateTitleTaskProgress(1014, 1, false)
+                break
+            end
+        end
+    end
+    -- 鎸栫熆璁℃暟浠诲姟杩涘害
+    local VIM = GetVirtualItemManagerSafe()
+    if VIM and VIM.GetItemNum then
+        local OkMine, MineNum = pcall(VIM.GetItemNum, VIM, TITLE_MINE_COUNT_ITEM_ID, self)
+        if OkMine then
+            local MineCount = math.floor(tonumber(MineNum) or 0)
+            if MineCount > 0 then
+                self:Server_UpdateTitleTaskProgress(1017, MineCount, false)
+            end
+        end
+    end
+end
+
+function UGCPlayerController:Server_AddMineOreCount(Count)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    Count = math.floor(tonumber(Count) or 1)
+    if Count <= 0 then
+        return
+    end
+    local VIM = GetVirtualItemManagerSafe()
+    if not VIM or not VIM.AddVirtualItem or not VIM.GetItemNum then
+        return
+    end
+    local OkNum, Num = pcall(VIM.GetItemNum, VIM, TITLE_MINE_COUNT_ITEM_ID, self)
+    local Have = OkNum and math.floor(tonumber(Num) or 0) or 0
+    local OkAdd, AddErr = pcall(VIM.AddVirtualItem, VIM, self, TITLE_MINE_COUNT_ITEM_ID, Count)
+    if not OkAdd then
+        ugcprint(string.format("[称号] 挖矿计数物品添加失败: %s", tostring(AddErr)))
+        return
+    end
+    local New = Have + Count
+    ugcprint(string.format("[称号] 挖矿计数 +%d => %d", Count, New))
+    self:Server_UpdateTitleTaskProgress(1017, New, false)
+end
+
+function UGCPlayerController:Server_CompleteTutorialTitleTask()
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    self:Server_UpdateTitleTaskProgress(1015, 1, false)
+end
+
+function UGCPlayerController:Server_UpdateJadeTitleTask(Value)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    Value = math.floor(tonumber(Value) or 0)
+    local Target = 2000
+    if TitleConfig and TitleConfig.GetTaskTarget then
+        Target = math.floor(tonumber(TitleConfig.GetTaskTarget(1016)) or 2000)
+    end
+    self:Server_UpdateTitleTaskProgress(1016, Value, false)
+end
+
+function UGCPlayerController:ValidateTitleTaskRewards()
+    if not TitleConfig or not TitleConfig.GetAllTitles then
+        return
+    end
+    local TM = GetTaskManagerGlobalSafe()
+    if not TM or not TM.GetTaskAwardList then
+        return
+    end
+    for _, TitleID in ipairs(TitleConfig.GetAllTitles()) do
+        local Entry = TitleConfig.Get(TitleID)
+        if Entry then
+            local Ok, AwardList = pcall(TM.GetTaskAwardList, TM, TitleID)
+            local Count = 0
+            if Ok and AwardList then
+                local OkPairs, C = pcall(function()
+                    local N = 0
+                    for _ in pairs(AwardList) do
+                        N = N + 1
+                    end
+                    return N
+                end)
+                if OkPairs then
+                    Count = math.floor(tonumber(C) or 0)
+                end
+            end
+            if Count > 0 then
+                ugcprint(string.format("[称号] 任务奖励配置正常: TitleID=%d 奖励数=%d", TitleID, Count))
+            else
+                ugcprint(string.format("[称号] 警告: 任务 %d 未配置奖励，领取不会发放虚拟物品", TitleID))
+            end
+        end
+    end
+end
+
+function UGCPlayerController:OnTitleItemAdded(Result)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    if not Result or Result.bSucceeded == false then
+        return
+    end
+    if not Result.ItemList then
+        return
+    end
+    local SelfKey = 0
+    if self.GetInt64PlayerKey then
+        SelfKey = math.floor(tonumber(self:GetInt64PlayerKey()) or 0)
+    end
+    local PlayerKey = Result.PlayerKey
+    if SelfKey > 0 and PlayerKey ~= nil and math.floor(tonumber(PlayerKey) or 0) ~= SelfKey then
+        return
+    end
+    for ItemID, Num in pairs(Result.ItemList) do
+        local Entry, TitleID = nil, nil
+        if TitleConfig and TitleConfig.GetByUnlockItemID then
+            Entry, TitleID = TitleConfig.GetByUnlockItemID(ItemID)
+        end
+        if Entry and TitleID then
+            ugcprint(string.format("[称号] 解锁凭证到账: TitleID=%d Name=%s Num=%s", TitleID, tostring(Entry.Name), tostring(Num)))
+            if TITLE_AUTO_EQUIP_ENABLED then
+                local OkEquip = self:Server_EquipTitleIfNone(TitleID)
+                if OkEquip then
+                    InvokeClient(self, "Client_TitleNotify", "已自动佩戴称号：" .. tostring(Entry.Name))
+                    InvokeClient(self, "Client_SyncTitleState", TitleID, table.concat(self:GetUnlockedTitleIDs(), ","))
+                    self:NotifyAllClientsTitleChanged()
+                end
+            end
+        end
+    end
+end
+
+function UGCPlayerController:BindTitleItemListener(Attempt)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    if self._bTitleItemListenerBinded then
+        return
+    end
+    local VIM = GetVirtualItemManagerSafe()
+    if VIM and VIM.AddItemResultDelegate then
+        VIM.AddItemResultDelegate:Add(self.OnTitleItemAdded, self)
+        self._bTitleItemListenerBinded = true
+        ugcprint("[称号] 服务端监听 AddItemResultDelegate 成功")
+        return
+    end
+    Attempt = math.floor(tonumber(Attempt) or 1)
+    if Attempt < 15 then
+        UGCTimerUtility.CreateLuaTimer(1.0, function()
+            if UGCObjectUtility.IsObjectValid(self) then
+                self:BindTitleItemListener(Attempt + 1)
+            end
+        end, false)
+    end
+end
+
+function UGCPlayerController:InitTitleState(Attempt)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    if not UGCObjectUtility.IsObjectValid(self) then
+        return
+    end
+    local VIM = GetVirtualItemManagerSafe()
+    if not VIM or not VIM.GetItemNum then
+        Attempt = math.floor(tonumber(Attempt) or 1)
+        if Attempt < 15 then
+            UGCTimerUtility.CreateLuaTimer(1.0, function()
+                if UGCObjectUtility.IsObjectValid(self) then
+                    self:InitTitleState(Attempt + 1)
+                end
+            end, false)
+        end
+        return
+    end
+    local CurrentID = 0
+    if TitleConfig and TitleConfig.GetAllTitles then
+        for _, TitleID in ipairs(TitleConfig.GetAllTitles()) do
+            local Entry = TitleConfig.Get(TitleID)
+            if Entry then
+                local OkNum, Num = pcall(VIM.GetItemNum, VIM, Entry.EquipItemID, self)
+                if OkNum and math.floor(tonumber(Num) or 0) > 0 then
+                    CurrentID = TitleID
+                    break
+                end
+            end
+        end
+    end
+    if TITLE_AUTO_EQUIP_ENABLED and CurrentID == 0 and TitleConfig and TitleConfig.GetAllTitles then
+        for _, TitleID in ipairs(TitleConfig.GetAllTitles()) do
+            local Entry = TitleConfig.Get(TitleID)
+            if Entry then
+                local OkNum, Num = pcall(VIM.GetItemNum, VIM, Entry.UnlockItemID, self)
+                if OkNum and math.floor(tonumber(Num) or 0) > 0 then
+                    CurrentID = TitleID
+                    pcall(VIM.AddVirtualItem, VIM, self, Entry.EquipItemID, 1)
+                    break
+                end
+            end
+        end
+    end
+    local Pawn = GetPawnByControllerSafe(self)
+    if not Pawn or not UGCObjectUtility.IsObjectValid(Pawn) then
+        Attempt = math.floor(tonumber(Attempt) or 1)
+        if Attempt < 15 then
+            UGCTimerUtility.CreateLuaTimer(1.0, function()
+                if UGCObjectUtility.IsObjectValid(self) then
+                    self:InitTitleState(Attempt + 1)
+                end
+            end, false)
+        end
+        return
+    end
+    -- 先同步 Pawn 上的当前称号，避免后续自动解锁时重复佩戴
+    Pawn:SetCurrentTitleID(CurrentID)
+    self:Server_RefreshTitleProgress()
+    self:ValidateTitleTaskRewards()
+    local FinalID = self:GetCurrentTitleID()
+    ugcprint(string.format("[称号] 初始化完成: CurrentTitleID=%d", FinalID))
+    InvokeClient(self, "Client_SyncTitleState", FinalID, table.concat(self:GetUnlockedTitleIDs(), ","))
+    if TITLE_BAR_UI_ENABLED then
+        self:EnsureTitleBarAdded(1)
+    else
+        ugcprint("[称号] 当前阶段跳过头顶称号 UI")
+    end
+end
+
+function UGCPlayerController:EnsureTitleBarAdded(Attempt)
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    local Pawn = GetPawnByControllerSafe(self)
+    if not Pawn or not UGCObjectUtility.IsObjectValid(Pawn) then
+        Attempt = math.floor(tonumber(Attempt) or 1)
+        if Attempt < 15 then
+            UGCTimerUtility.CreateLuaTimer(1.0, function()
+                if UGCObjectUtility.IsObjectValid(self) then
+                    self:EnsureTitleBarAdded(Attempt + 1)
+                end
+            end, false)
+        end
+        return
+    end
+    ugcprint("[称号] 服务端广播客户端头顶UI创建 RPC")
+    self:NotifyAllClientsTitleChanged()
+end
+
+function UGCPlayerController:NotifyAllClientsTitleChanged()
+    if not UGCGameSystem.IsServer() then
+        return
+    end
+    local AllPC = nil
+    if UGCGameSystem and UGCGameSystem.GetAllPlayerController then
+        local Ok, PCs = pcall(UGCGameSystem.GetAllPlayerController)
+        if Ok then
+            AllPC = PCs
+        end
+    end
+    if type(AllPC) ~= "table" then
+        InvokeClient(self, "Client_EnsureAllTitleBars")
+        return
+    end
+    for _, PC in ipairs(AllPC) do
+        if PC and UGCObjectUtility.IsObjectValid(PC) then
+            InvokeClient(PC, "Client_EnsureAllTitleBars")
+        end
+    end
+end
+
+function UGCPlayerController:Client_EnsureTitleBarAdded(Attempt)
+    self:Client_EnsureAllTitleBars(Attempt)
+end
+
+function UGCPlayerController:Client_EnsureAllTitleBars(Attempt)
+    local PC = self
+    if not PC or not UGCObjectUtility.IsObjectValid(PC) then
+        return
+    end
+    ugcprint("[称号] 客户端刷新全部玩家头顶UI")
+    local AllPawn = nil
+    if UGCGameSystem and UGCGameSystem.GetAllPlayerPawn then
+        local Ok, Pawns = pcall(UGCGameSystem.GetAllPlayerPawn)
+        if Ok then
+            AllPawn = Pawns
+        end
+    end
+    local Found = false
+    if type(AllPawn) == "table" then
+        for _, Pawn in ipairs(AllPawn) do
+            if Pawn and UGCObjectUtility.IsObjectValid(Pawn) then
+                Found = true
+                PC:Client_AddTitleBarForPawn(Pawn)
+            end
+        end
+    end
+    local OwnPawn = GetPawnByControllerSafe(PC)
+    if OwnPawn then
+        local OkID, ID = pcall(function()
+            return OwnPawn.CurrentTitleID
+        end)
+        if OkID and ID ~= nil and math.floor(tonumber(ID) or 0) > 0 then
+            PC.ClientCurrentTitleID = math.floor(tonumber(ID) or 0)
+        end
+    end
+    if not Found then
+        Attempt = math.floor(tonumber(Attempt) or 1)
+        if Attempt < 15 then
+            UGCTimerUtility.CreateLuaTimer(1.0, function()
+                if UGCObjectUtility.IsObjectValid(PC) then
+                    PC:Client_EnsureAllTitleBars(Attempt + 1)
+                end
+            end, false)
+        else
+            ugcprint("[称号] 客户端获取玩家Pawn列表失败（重试 15 次后放弃）")
+        end
+    end
+end
+
+function UGCPlayerController:Client_AddTitleBarForPawn(Pawn)
+    local PC = self
+    if not PC or not UGCObjectUtility.IsObjectValid(PC) or not Pawn or not UGCObjectUtility.IsObjectValid(Pawn) then
+        return
+    end
+    if PC._TitleBarIndexByPawn == nil then
+        PC._TitleBarIndexByPawn = {}
+    end
+    if PC._TitleBarIndexByPawn[Pawn] ~= nil then
+        PC:Client_RefreshTitleBarForPawn(Pawn)
+        return
+    end
+    local p = UGCGameSystem.GetUGCResourcesFullPath(TITLE_BAR_WIDGET_PATH)
+    if not p or p == '' then
+        ugcprint("[称号] WBP_TitleBar path not found")
+        return
+    end
+    local PawnName = tostring(Pawn)
+    if Pawn and Pawn.GetName then
+        local OkName, Name = pcall(Pawn.GetName, Pawn)
+        if OkName then
+            PawnName = tostring(Name)
+        end
+    end
+    local Ok, Index = pcall(UGCWidgetManagerSystem.AddObjectPositionUI, Pawn, p, TITLE_BAR_OFFSET, true, false, false, true)
+    if Ok and Index ~= nil then
+        PC._TitleBarIndexByPawn[Pawn] = Index
+        ugcprint(string.format("[称号] 客户端头顶称号UI已提交: Pawn=%s Index=%s（负数表示异步加载中）",
+            PawnName, tostring(Index)))
+        PC:Client_ConfirmTitleBarCreated(Pawn, 1)
+    else
+        ugcprint(string.format("[称号] 客户端头顶称号UI添加失败: Pawn=%s Ok=%s Err=%s",
+            PawnName, tostring(Ok), tostring(Index)))
+    end
+end
+
+function UGCPlayerController:Client_RefreshTitleBarForPawn(Pawn)
+    local PC = self
+    local Index = PC and PC._TitleBarIndexByPawn and PC._TitleBarIndexByPawn[Pawn]
+    if Index == nil or not Pawn or not UGCObjectUtility.IsObjectValid(Pawn) then
+        return
+    end
+    if UGCWidgetManagerSystem and UGCWidgetManagerSystem.GetObjectPositionUI then
+        local Ok, Widget = pcall(UGCWidgetManagerSystem.GetObjectPositionUI, Pawn, Index)
+        if Ok and Widget and Widget.RefreshTitle then
+            pcall(Widget.RefreshTitle, Widget)
+        end
+    end
+end
+
+function UGCPlayerController:Client_ConfirmTitleBarCreated(Pawn, Attempt)
+    local PC = self
+    if not PC or not UGCObjectUtility.IsObjectValid(PC) then
+        return
+    end
+    local Index = PC._TitleBarIndexByPawn and PC._TitleBarIndexByPawn[Pawn]
+    if Index == nil then
+        return
+    end
+    if Pawn and UGCObjectUtility.IsObjectValid(Pawn) and UGCWidgetManagerSystem and UGCWidgetManagerSystem.GetObjectPositionUI then
+        local Ok, Widget = pcall(UGCWidgetManagerSystem.GetObjectPositionUI, Pawn, Index)
+        if Ok and Widget ~= nil then
+            ugcprint(string.format("[称号] 客户端头顶称号UI创建完成: Index=%s", tostring(Index)))
+            if Widget.RefreshTitle then
+                pcall(Widget.RefreshTitle, Widget)
+            end
+            return
+        end
+    end
+    Attempt = math.floor(tonumber(Attempt) or 1)
+    if Attempt < 30 then
+        UGCTimerUtility.CreateLuaTimer(1.0, function()
+            if UGCObjectUtility.IsObjectValid(PC) then
+                PC:Client_ConfirmTitleBarCreated(Pawn, Attempt + 1)
+            end
+        end, false)
+    else
+        ugcprint("[称号] 客户端等待头顶称号UI创建超时，控件将由系统异步创建")
     end
 end
 

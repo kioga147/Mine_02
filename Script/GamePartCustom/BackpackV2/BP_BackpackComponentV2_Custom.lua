@@ -2,6 +2,9 @@
 --Edit Below--
 local BP_BackpackComponentV2_Custom = {} 
 
+local GOLD_ITEM_ID = 8310002
+local MINING_VEHICLE_ITEM_IDS = { [8310023] = true, [8310024] = true, [8310025] = true }
+
 
 ---func 背包初始化函数，玩家登录后执行一次(服务端调用)
 function BP_BackpackComponentV2_Custom:InitEventAfterPlayerEnter()
@@ -53,6 +56,18 @@ end
 ---@param Count number 物品数量
 function BP_BackpackComponentV2_Custom:OnAddItemV2(DefineID, Count)
     BP_BackpackComponentV2_Custom.SuperClass.OnAddItemV2(self, DefineID, Count)
+    if UGCGameSystem and UGCGameSystem.IsServer and UGCGameSystem.IsServer() then
+        local ItemID = 0
+        if DefineID and DefineID.TypeSpecificID ~= nil then
+            ItemID = math.floor(tonumber(DefineID.TypeSpecificID) or 0)
+        end
+        if ItemID == GOLD_ITEM_ID or MINING_VEHICLE_ITEM_IDS[ItemID] then
+            local PC = self:GetOwner()
+            if PC and PC.Server_RefreshTitleProgress then
+                pcall(PC.Server_RefreshTitleProgress, PC)
+            end
+        end
+    end
 end
 
 ---func 能否合并物品(新添加物品能否与已有格子物品堆叠, 格子物品即物品实例)(服务端调用)
@@ -70,6 +85,18 @@ end
 ---@param MergeCount number 合并到该格子的新物品数量
 function BP_BackpackComponentV2_Custom:OnMergeItemV2(ItemDefineID, OldCount, MergeCount)
     BP_BackpackComponentV2_Custom.SuperClass.OnMergeItemV2(self, ItemDefineID, OldCount, MergeCount)
+    if UGCGameSystem and UGCGameSystem.IsServer and UGCGameSystem.IsServer() then
+        local ItemID = 0
+        if ItemDefineID and ItemDefineID.TypeSpecificID ~= nil then
+            ItemID = math.floor(tonumber(ItemDefineID.TypeSpecificID) or 0)
+        end
+        if ItemID == GOLD_ITEM_ID or MINING_VEHICLE_ITEM_IDS[ItemID] then
+            local PC = self:GetOwner()
+            if PC and PC.Server_RefreshTitleProgress then
+                pcall(PC.Server_RefreshTitleProgress, PC)
+            end
+        end
+    end
 end
 
 ---func 能否移除物品(服务端调用)

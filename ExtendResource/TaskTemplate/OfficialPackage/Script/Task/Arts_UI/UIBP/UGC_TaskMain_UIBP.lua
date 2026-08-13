@@ -7,14 +7,21 @@
 ---@field ScaleBox_IPX UScaleBox
 ---@field ScaleBox_NewTaskBG UScaleBox
 ---@field Task_TabMenu UGC_ReuseList2_C
+---@field Btn_Title UButton
 --Edit Below--
 local UGC_TaskMain_UIBP = { bInitDoOnce = false } 
+
+local TITLE_PANEL_PATH = 'Asset/Blueprint/Prefabs/UI/WBP_TitleAchievementPanel.WBP_TitleAchievementPanel_C'
 
 function UGC_TaskMain_UIBP:Construct()
     print("[UGC_TaskMain_UIBP:Construct]");
     self:InitBindEvent();
     self.TabList = {};
     self.SelectTaskLineIndex = -1;
+    if self.Btn_Title and self.Btn_Title.OnClicked then
+        self.Btn_Title.OnClicked:Add(self.OnBtnTitleClicked, self)
+        print("[UGC_TaskMain_UIBP:Construct] Btn_Title bound");
+    end
     Common.LoadObjectAsync('/Game/WwiseEvent/UI_Button/Play_UI_Bnt_MainMenu.Play_UI_Bnt_MainMenu',
             function (Object)
                 if self ~= nil and UE.IsValid(self) then
@@ -34,6 +41,9 @@ function UGC_TaskMain_UIBP:Destruct()
         Timer.RemoveTimer(self.TaskMainUITimer);
         self.TaskMainUITimer = nil;
     end
+    if self.Btn_Title and self.Btn_Title.OnClicked then
+        self.Btn_Title.OnClicked:Remove(self.OnBtnTitleClicked, self)
+    end
     self.Task_TabMenu.OnUpdateItem:RemoveAll();
     self.button_close.OnClicked:RemoveAll();
 end
@@ -44,6 +54,7 @@ function UGC_TaskMain_UIBP:InitBindEvent()
 end
 
 function UGC_TaskMain_UIBP:Close()
+    self:CloseTitlePanel()
     TaskManager:CloseTaskMainUI()
 end
 
@@ -352,6 +363,58 @@ function UGC_TaskMain_UIBP:SignWeeklyResetTaskLine(TaskLineName)
                 end
             end
         end
+    end
+end
+
+function UGC_TaskMain_UIBP:CreateTitlePanel()
+    if self.TitlePanel and UE.IsValid(self.TitlePanel) then
+        return
+    end
+    local PC = UGCGameSystem.GetLocalPlayerController()
+    if not PC then
+        return
+    end
+    local p = UGCGameSystem.GetUGCResourcesFullPath(TITLE_PANEL_PATH)
+    if not p or p == '' then
+        print("[UGC_TaskMain_UIBP] TitlePanel path not found");
+        return
+    end
+    local cls = UE.LoadClass(p)
+    if not cls then
+        print("[UGC_TaskMain_UIBP] TitlePanel LoadClass failed");
+        return
+    end
+    local UI = UserWidget.NewWidgetObjectBP(PC, cls)
+    if not UI or not UE.IsValid(UI) then
+        print("[UGC_TaskMain_UIBP] TitlePanel create failed");
+        return
+    end
+    self.TitlePanel = UI
+    UIUtil.AttachTo(self.CanvasPanel_Content, UI, 0,
+        { Minimum = { X = 0, Y = 0 }, Maximum = { X = 1, Y = 1 } },
+        { Left = 0, Right = -1.5, Bottom = 0, Top = 0 })
+    UI:SetVisibility(ESlateVisibility.Collapsed)
+end
+
+function UGC_TaskMain_UIBP:OnBtnTitleClicked()
+    self:CreateTitlePanel()
+    local P = self.TitlePanel
+    if not P or not UE.IsValid(P) then
+        return
+    end
+    if P:IsVisible() then
+        P:SetVisibility(ESlateVisibility.Collapsed)
+    else
+        if P.InitUI then
+            pcall(P.InitUI, P)
+        end
+        P:SetVisibility(ESlateVisibility.Visible)
+    end
+end
+
+function UGC_TaskMain_UIBP:CloseTitlePanel()
+    if self.TitlePanel and UE.IsValid(self.TitlePanel) then
+        self.TitlePanel:SetVisibility(ESlateVisibility.Collapsed)
     end
 end
 

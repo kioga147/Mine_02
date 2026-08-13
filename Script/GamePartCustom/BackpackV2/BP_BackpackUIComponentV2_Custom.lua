@@ -1,6 +1,11 @@
----@class BP_BackpackUIComponentV2_Custom_C:BP_BackpackUIComponentV2_C
+﻿---@class BP_BackpackUIComponentV2_Custom_C:BP_BackpackUIComponentV2_C
 --Edit Below--
-local BP_BackpackUIComponentV2_Custom = {} 
+local BP_BackpackUIComponentV2_Custom = {}
+
+local TITLE_SWITCH_PANEL_PATH = 'Asset/Blueprint/Prefabs/UI/WBP_TitleSwitchPanel.WBP_TitleSwitchPanel_C'
+local TITLE_SWITCH_PANEL_ENABLED = true
+-- 官方背包预设锚点：侧边栏（参考 docs/wiki/进阶内容/UI系统/20097_和平控件锚点.md）
+local TITLE_SWITCH_SLOT_NAME = 'UI.UISlot.BackpackUISlot.Full.OptionSlot'
 
 local WarehouseConfig = nil
 do
@@ -27,6 +32,86 @@ do
                 return (math.floor(tonumber(CurrentCapacity) or 0) + 100) <= 10050
             end,
         }
+    end
+end
+
+local function GetLocalPlayerControllerSafe()
+    if UGCGameSystem and UGCGameSystem.GetLocalPlayerController then
+        local Ok, PC = pcall(UGCGameSystem.GetLocalPlayerController)
+        if Ok then
+            return PC
+        end
+    end
+    return nil
+end
+
+function BP_BackpackUIComponentV2_Custom:ShowTitleSwitchPanel(Panel)
+    if self.TitleSwitchPanel and UE.IsValid(self.TitleSwitchPanel) then
+        if self.TitleSwitchPanel.InitUI then
+            pcall(self.TitleSwitchPanel.InitUI, self.TitleSwitchPanel)
+        end
+        self.TitleSwitchPanel:SetVisibility(ESlateVisibility.Visible)
+        ugcprint("[称号] TitleSwitchPanel 复用已有面板")
+        return
+    end
+
+    local WidgetPath = UGCGameSystem.GetUGCResourcesFullPath(TITLE_SWITCH_PANEL_PATH)
+    if not WidgetPath or WidgetPath == '' then
+        ugcprint("[称号] TitleSwitchPanel path not found")
+        return
+    end
+
+    -- 官方方案：CreateWidgetAsync + AddToSlot 挂到背包侧边栏锚点
+    UGCWidgetManagerSystem.CreateWidgetAsync(WidgetPath, function(WidgetInstance)
+        if not WidgetInstance then
+            ugcprint("[称号] TitleSwitchPanel CreateWidgetAsync 失败")
+            return
+        end
+        if not UGCObjectUtility.IsObjectValid(self) then
+            ugcprint("[称号] TitleSwitchPanel 创建回调时组件已销毁")
+            return
+        end
+
+        local AnchorData = CreateStruct("AnchorData")
+        local OffsetsData = CreateStruct("Margin")
+        OffsetsData.Left = 0
+        OffsetsData.Top = 0
+        OffsetsData.Right = 0
+        OffsetsData.Bottom = 0
+        local Anchors = CreateStruct("Anchors")
+        Anchors.Minimum = Vector2D.New(0, 0)
+        Anchors.Maximum = Vector2D.New(1, 1)
+        AnchorData.Offsets = OffsetsData
+        AnchorData.Anchors = Anchors
+        AnchorData.Alignment = Vector2D.New(0, 0)
+
+        UGCWidgetManagerSystem.AddToSlot(WidgetInstance, TITLE_SWITCH_SLOT_NAME, 0, AnchorData)
+
+        self.TitleSwitchPanel = WidgetInstance
+        WidgetInstance:SetVisibility(ESlateVisibility.Visible)
+
+        if WidgetInstance.InitUI then
+            pcall(WidgetInstance.InitUI, WidgetInstance)
+        end
+
+        ugcprint("[称号] TitleSwitchPanel 已挂载到背包 OptionSlot")
+    end)
+end
+
+function BP_BackpackUIComponentV2_Custom:RefreshTitleSwitchPanel()
+    if self.TitleSwitchPanel and UE.IsValid(self.TitleSwitchPanel) and self.TitleSwitchPanel.RefreshList then
+        pcall(self.TitleSwitchPanel.RefreshList, self.TitleSwitchPanel)
+    end
+end
+
+function BP_BackpackUIComponentV2_Custom:HideTitleSwitchPanel()
+    if self.TitleSwitchPanel then
+        if UE.IsValid(self.TitleSwitchPanel) then
+            pcall(UGCWidgetManagerSystem.RemoveFromSlot, self.TitleSwitchPanel)
+            pcall(UGCWidgetManagerSystem.DestroyWidget, self.TitleSwitchPanel)
+            ugcprint("[称号] TitleSwitchPanel 已从 OptionSlot 移除并销毁")
+        end
+        self.TitleSwitchPanel = nil
     end
 end
 
@@ -88,6 +173,14 @@ end
 ---@param Panel UUserWidget @背包主界面控件
 function BP_BackpackUIComponentV2_Custom:OnOpenBattleMainPanel(Panel)
     BP_BackpackUIComponentV2_Custom.SuperClass.OnOpenBattleMainPanel(self, Panel)
+    if TITLE_SWITCH_PANEL_ENABLED then
+        self:ShowTitleSwitchPanel(Panel)
+    end
+end
+
+function BP_BackpackUIComponentV2_Custom:OnCloseBattleMainPanel(Panel)
+    BP_BackpackUIComponentV2_Custom.SuperClass.OnCloseBattleMainPanel(self, Panel)
+    self:HideTitleSwitchPanel()
 end
 
 return BP_BackpackUIComponentV2_Custom

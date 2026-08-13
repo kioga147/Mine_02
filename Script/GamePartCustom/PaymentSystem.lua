@@ -266,7 +266,7 @@ function PaymentSystem._GrantCommodityToPlayer(pc, CommodityId, Count)
     -- 直接在服务端执行效果，避免二次调用Buy接口
     if effect == "give_item" then
         local itemId = math.floor(tonumber(params.ItemId) or 0)
-        local count = math.floor(tonumber(params.Count) or 1) * (Count or 1)
+    local count = math.floor(tonumber(params.Count) or 1) * math.max(1, math.floor(tonumber(Count) or 1))
         if UGCBackpackSystemV2 and UGCBackpackSystemV2.AddItemV2 then
             local ok, err = pcall(function()
                 UGCBackpackSystemV2.AddItemV2(pc, itemId, count)
@@ -303,7 +303,7 @@ function PaymentSystem.OnUseResult(bSuccess, PlayerKey, CommodityId, Count, UID)
             commodityName, tostring(CommodityId), tostring(Count)
         ))
 
-        PaymentSystem.ApplyCommodityEffect(CommodityId, Count)
+        PaymentSystem.ApplyCommodityEffect(PlayerKey, CommodityId, Count)
     else
         ugcprint(string.format(
             "[PaymentSystem] ❌ 使用失败: %s (物品ID=%s)",
@@ -314,7 +314,7 @@ end
 
 -- ========== 物品效果执行 ==========
 
-function PaymentSystem.ApplyCommodityEffect(CommodityId, Count)
+function PaymentSystem.ApplyCommodityEffect(PlayerKey, CommodityId, Count)
     local effect, params = PaymentConfig.GetCommodityEffect(CommodityId)
     if not effect or not params then
         ugcprint("[PaymentSystem] ⚠️ 无配置效果，跳过")
@@ -322,25 +322,34 @@ function PaymentSystem.ApplyCommodityEffect(CommodityId, Count)
     end
 
     if effect == "give_item" then
-        PaymentSystem.Effect_GiveItem(params)
+        PaymentSystem.Effect_GiveItem(PlayerKey, params, Count)
     elseif effect == "upgrade_backpack" then
-        PaymentSystem.Effect_UpgradeBackpack(params)
+        PaymentSystem.Effect_UpgradeBackpack(PlayerKey, params, Count)
     else
         ugcprint(string.format("[PaymentSystem] ⚠️ 未知效果类型: %s", tostring(effect)))
     end
 end
 
 --- 效果: 给玩家物品
-function PaymentSystem.Effect_GiveItem(params)
+function PaymentSystem.Effect_GiveItem(PlayerKey, params, Count)
     local itemId = math.floor(tonumber(params.ItemId) or 0)
-    local count = math.floor(tonumber(params.Count) or 1)
+    local count = math.floor(tonumber(params.Count) or 1) * math.max(1, math.floor(tonumber(Count) or 1))
 
     if itemId <= 0 then
         ugcprint("[PaymentSystem] ❌ 无效物品ID")
         return
     end
 
-    local pc = UGCGameSystem.GetLocalPlayerController()
+    local pc = nil
+    if PlayerKey ~= nil and UGCGameSystem.GetPlayerControllerByPlayerKey then
+        local OkPc, Pc = pcall(UGCGameSystem.GetPlayerControllerByPlayerKey, PlayerKey)
+        if OkPc then
+            pc = Pc
+        end
+    end
+    if not pc then
+        pc = UGCGameSystem.GetLocalPlayerController()
+    end
     if not pc then
         ugcprint("[PaymentSystem] ❌ 无法获取玩家控制器")
         return
@@ -370,10 +379,19 @@ function PaymentSystem.Effect_GiveItem(params)
 end
 
 --- 效果: 升级背包
-function PaymentSystem.Effect_UpgradeBackpack(params)
+function PaymentSystem.Effect_UpgradeBackpack(PlayerKey, params, Count)
     local targetLevel = math.floor(tonumber(params.TargetLevel) or 3)
 
-    local pc = UGCGameSystem.GetLocalPlayerController()
+    local pc = nil
+    if PlayerKey ~= nil and UGCGameSystem.GetPlayerControllerByPlayerKey then
+        local OkPc, Pc = pcall(UGCGameSystem.GetPlayerControllerByPlayerKey, PlayerKey)
+        if OkPc then
+            pc = Pc
+        end
+    end
+    if not pc then
+        pc = UGCGameSystem.GetLocalPlayerController()
+    end
     if not pc then
         ugcprint("[PaymentSystem] ❌ 无法获取玩家控制器")
         return

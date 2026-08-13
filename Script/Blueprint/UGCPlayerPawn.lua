@@ -1,6 +1,7 @@
 ---@class UGCPlayerPawn_C:BP_PlayerPawn_TopDown_C
+---@field CurrentTitleID number
 --Edit Below--
-local UGCPlayerPawn = {}
+local UGCPlayerPawn = { CurrentTitleID = 0 }
 
 local NORMAL_SPEED_SCALE = 2.0
 local MINE_CAR_SPEED_SCALE = 4.0
@@ -70,10 +71,19 @@ local lastWeaponName = ""
 function UGCPlayerPawn:ReceiveBeginPlay()
     UGCPlayerPawn.SuperClass.ReceiveBeginPlay(self)
     
+    self.CurrentTitleID = self.CurrentTitleID or 0
     self.bIsMineCarMode = false
     self.bWasMineCarMode = false
     self._mineCarMaxHealth = 0
     self._mineCarHealthDelegate = nil
+    if UGCGameSystem and UGCGameSystem.IsServer and UGCGameSystem.IsServer() then
+        if UGCGameSystem.GetPlayerControllerByPlayerPawn then
+            local OkPC, PC = pcall(UGCGameSystem.GetPlayerControllerByPlayerPawn, self)
+            if OkPC and PC and PC.InitTitleState then
+                pcall(PC.InitTitleState, PC, 1)
+            end
+        end
+    end
     UpdateMoveSpeed(self)
     UGCAttributeSystem.SetGameAttributeValue(self, "AxeLevel", 0)
     
@@ -486,8 +496,19 @@ function UGCPlayerPawn:ReceiveEndPlay()
     UGCPlayerPawn.SuperClass.ReceiveEndPlay(self) 
 end
 
+function UGCPlayerPawn:SetCurrentTitleID(TitleID)
+    self.CurrentTitleID = math.floor(tonumber(TitleID) or 0)
+    if UnrealNetwork and UnrealNetwork.RepLazyProperty then
+        pcall(UnrealNetwork.RepLazyProperty, self, "CurrentTitleID")
+    end
+end
+
+function UGCPlayerPawn:OnRep_CurrentTitleID()
+    ugcprint(string.format("[称号] 客户端Pawn称号复制: CurrentTitleID=%d", math.floor(tonumber(self.CurrentTitleID) or 0)))
+end
+
 function UGCPlayerPawn:GetReplicatedProperties()
-    return {"__SubObjectRepList", "Lazy"}
+    return {"__SubObjectRepList", "Lazy"}, {"CurrentTitleID", "Lazy"}
 end
 
 function UGCPlayerPawn:GetAvailableServerRPCs()

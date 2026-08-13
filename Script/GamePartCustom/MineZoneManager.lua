@@ -330,6 +330,22 @@ function MineZoneManager.OnOreDestroyed(ZoneId, OreKey, Actor, EventInstigator)
         return
     end
 
+    if EventInstigator then
+        local Pawn = nil
+        if EventInstigator.GetPawn then
+            local OkP, P = pcall(EventInstigator.GetPawn, EventInstigator)
+            if OkP then
+                Pawn = P
+            end
+        end
+        if Pawn and UGCGameSystem and UGCGameSystem.GetPlayerControllerByPlayerPawn then
+            local OkPC, PC = pcall(UGCGameSystem.GetPlayerControllerByPlayerPawn, Pawn)
+            if OkPC and PC and PC.Server_AddMineOreCount then
+                pcall(PC.Server_AddMineOreCount, PC, 1)
+            end
+        end
+    end
+
     local zone = MineZoneConfig and MineZoneConfig.GetZone(ZoneId)
     if zone == nil then
         ugcprint(string.format("[MineZoneManager] OnOreDestroyed: 矿区%d配置不存在", ZoneId))

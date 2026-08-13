@@ -14,7 +14,7 @@ PaymentConfig.Products = {
         Items = {
             { CommodityId = 1001, Count = 1, Desc = "铁钻头 x1" },
             { CommodityId = 1002, Count = 1, Desc = "背包升级三级券 x1" },
-            { CommodityId = 1003, Count = 5, Desc = "玉矿石 x5" },
+            { CommodityId = 1003, Count = 1, Desc = "玉矿石 x1" },
         },
     },
 }
@@ -39,9 +39,9 @@ PaymentConfig.Commodities = {
     [1003] = {
         CommodityId = 1003,
         Name = "玉矿石",
-        Desc = "使用后获得玉矿石(8310010)",
+        Desc = "使用后获得玉矿石(8310011)",
         Effect = "give_item",
-        EffectParams = { ItemId = 8310010, Count = 1 },
+        EffectParams = { ItemId = 8310011, Count = 1 },
     },
 }
 

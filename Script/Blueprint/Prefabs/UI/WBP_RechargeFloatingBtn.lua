@@ -205,7 +205,7 @@ function WBP_RechargeFloatingBtn:OnBtnTaskClicked()
         if UI.InitUI then
             pcall(UI.InitUI, UI)
         end
-        UI:SetVisibility(ESlateVisibility.SelfHitTestInvisible)
+        UI:SetVisibility(ESlateVisibility.Visible)
     end
     ugcprint('[TaskBtn] opened')
 end

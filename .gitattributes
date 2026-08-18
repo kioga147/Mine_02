@@ -1,5 +1,4 @@
 * text=auto
-
 *.lua text eol=lf
 *.ini text eol=crlf
 *.json text eol=lf
@@ -7,7 +6,6 @@
 *.txt text eol=crlf
 *.html text eol=lf
 *.ugcproj text eol=crlf
-
 *.uasset binary
 *.umap binary
 *.navmesh binary
@@ -15,3 +13,4 @@
 *.jpg binary
 *.jpeg binary
 *.ico binary
+zichan/kuangshi/meikuang/t-3_low_DefaultMaterial_Normal.uasset filter=lfs diff=lfs merge=lfs -text

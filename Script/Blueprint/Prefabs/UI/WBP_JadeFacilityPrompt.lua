@@ -312,11 +312,6 @@ function WBP_JadeFacilityPrompt:OnManualClicked()
     end
 end
 
-function WBP_JadeFacilityPrompt:OnEnterClicked()
-    if self.Callbacks and self.Callbacks.OnEnter then
-        pcall(self.Callbacks.OnEnter)
-    end
-end
 
 function WBP_JadeFacilityPrompt:OnCloseClicked()
     if self.Callbacks and self.Callbacks.OnClose then

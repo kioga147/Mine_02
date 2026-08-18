@@ -1,4 +1,4 @@
-﻿---@class BP_BackpackUIComponentV2_Custom_C:BP_BackpackUIComponentV2_C
+---@class BP_BackpackUIComponentV2_Custom_C:BP_BackpackUIComponentV2_C
 --Edit Below--
 local BP_BackpackUIComponentV2_Custom = {}
 

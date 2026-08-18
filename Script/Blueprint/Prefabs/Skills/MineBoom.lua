@@ -47,38 +47,6 @@ local function SwitchToEmptyHand(PlayerPawn)
 end
 
 -- 切换回近战武器
-local function SwitchToMeleeWeapon(PlayerPawn)
-    if not PlayerPawn then return end
-
-    if UGCWeaponManagerSystem and UGCWeaponManagerSystem.SwitchWeaponBySlot then
-        pcall(UGCWeaponManagerSystem.SwitchWeaponBySlot, PlayerPawn, MELEE_WEAPON_SLOT, true)
-        ugcprint("[MineBoom] 切换回近战武器成功")
-    end
-end
-
--- 移除矿石炸弹技能实例
-local function RemoveMineBoomSkillInstance(PlayerPawn)
-    if not PlayerPawn or not UGCPersistEffectSystem then return end
-
-    local FullPath = UGCGameSystem.GetUGCResourcesFullPath(MINE_BOOM_SKILL_CLASS_PATH)
-    local SkillClass = UGCObjectUtility.LoadClass(FullPath)
-    if not SkillClass then
-        ugcprint("[MineBoom] 无法加载MineBoom技能类")
-        return
-    end
-
-    local Ok, Skills = pcall(UGCPersistEffectSystem.GetSkillsByClass, PlayerPawn, SkillClass)
-    if Ok and Skills and #Skills > 0 then
-        for _, SkillInst in ipairs(Skills) do
-            if UE.IsValid(SkillInst) then
-                pcall(UGCPersistEffectSystem.RemoveSkillInstance, PlayerPawn, SkillInst)
-                ugcprint("[MineBoom] 移除炸弹技能实例")
-            end
-        end
-    end
-local MELEE_WEAPON_SLOT = 4
-local MELEE_SLOT_NAME = "EquipmentSlot.Core.MeleeSlot"
-
 local function GetPlayerPawn(Skill)
     if not Skill then
         return nil
@@ -168,8 +136,10 @@ function MineBoom:OnActivateSkill_BP()
             local Ok = pcall(UGCBackpackSystemV2.RemoveItemV2, PlayerPawn, MINE_BOOM_ITEM_ID, 1)
             ugcprint("[MineBoom] 移除矿石炸弹: " .. tostring(Ok))
         end
+    end
+
     ugcprint("[MineBoom] 技能激活")
-    
+
     -- 激活时把当前武器挂到背后（变成空手状态）
     local PlayerPawn = GetPlayerPawn(self)
     if PlayerPawn then
@@ -204,18 +174,20 @@ function MineBoom:OnDeActivateSkill_BP()
         SwitchToMeleeWeapon(PlayerPawn)
     else
         ugcprint("[MineBoom] 还有矿石炸弹，保持空手状态")
+    end
+
     ugcprint("[MineBoom] 技能结束")
-    
+
     -- 结束时切换回近战武器（镐子）
-    local PlayerPawn = GetPlayerPawn(self)
-    if PlayerPawn then
+    local PlayerPawn2 = GetPlayerPawn(self)
+    if PlayerPawn2 then
         -- 延迟一帧切换，确保技能完全结束
         if UGCGameSystem and UGCGameSystem.SetTimer then
             UGCGameSystem.SetTimer(function()
-                SwitchToMeleeWeapon(PlayerPawn)
+                SwitchToMeleeWeapon(PlayerPawn2)
             end, 0.1, false)
         else
-            SwitchToMeleeWeapon(PlayerPawn)
+            SwitchToMeleeWeapon(PlayerPawn2)
         end
     end
 end

@@ -188,16 +188,6 @@ local function IsMineCarInHand(PlayerPawn)
     end
 
     return IsCurrentWeaponMineCar(PlayerPawn)
-    local Name = ""
-    if Weapon.GetName then
-        local NameOk, Result = pcall(function()
-            return Weapon:GetName()
-        end)
-        if NameOk and Result ~= nil then
-            Name = tostring(Result)
-        end
-    end
-    return string.find(Name, "MiningVehicle") ~= nil or string.find(Name, "MiningTruck") ~= nil
 end
 
 function Basic_MiningVehicle:ReceiveBeginPlay()
@@ -219,33 +209,18 @@ function Basic_MiningVehicle:ReceiveBeginPlay()
         return
     end
 
-    -- 变身由物品OnEquip在服务器端触发，武器端只负责补技能
-    if PlayerPawn.IsMineCarMode and PlayerPawn:IsMineCarMode() then
-        self:AddMineCarSkill(PlayerPawn)
-    if PlayerPawn then
-        if IsVehicleBroken(PlayerPawn) then
-            StopMineCarVisual(PlayerPawn)
-            AttachCurrentWeaponToBack(PlayerPawn)
-            NotifyRepairRequired(PlayerPawn)
-            ugcprint("[MineCarTrip] basic vehicle blocked by repair state")
-            return
-        end
-        RequestBeginTrip(PlayerPawn)
-        return
-    end
-    
+    -- 开始行程（服务端）
+    RequestBeginTrip(PlayerPawn)
+
     if PlayerPawn and PlayerPawn.SetMineCarMode then
-        if IsVehicleBroken(PlayerPawn) then
-            ugcprint("[矿车武器] 初级采矿车已损坏，阻止激活矿车模式")
-            return
-        end
         UGCAttributeSystem.SetGameAttributeValue(PlayerPawn, "AxeLevel", 2)
         ugcprint("[矿车武器] ✅ 已设置玩家AxeLevel=2")
         if PlayerPawn.IsMineCarMode and PlayerPawn:IsMineCarMode() then
             ugcprint("[矿车武器] ⚠️ 矿车模式已激活，跳过重复激活")
+            self:AddMineCarSkill(PlayerPawn)
         else
             PlayerPawn:SetMineCarMode(true)
-            
+
             if UGCTimerManagerSystem and UGCTimerManagerSystem.SetTimer then
                 UGCTimerManagerSystem.SetTimer(function()
                     self:AddMineCarSkill(PlayerPawn)
@@ -254,11 +229,16 @@ function Basic_MiningVehicle:ReceiveBeginPlay()
                 ugcprint("[矿车武器] ⚠️ UGCTimerManagerSystem不可用，直接添加技能")
                 self:AddMineCarSkill(PlayerPawn)
             end
-            
+
             ugcprint("[矿车武器] ✅ 成功激活矿车模式")
         end
     else
-        ugcprint("[矿车武器] 等待物品OnEquip触发变身")
+        -- 变身由物品OnEquip在服务器端触发，武器端只负责补技能
+        if PlayerPawn.IsMineCarMode and PlayerPawn:IsMineCarMode() then
+            self:AddMineCarSkill(PlayerPawn)
+        else
+            ugcprint("[矿车武器] 等待物品OnEquip触发变身")
+        end
     end
 
     ugcprint("[矿车武器] ==================== 矿车武器结束 ====================")
@@ -376,39 +356,6 @@ function Basic_MiningVehicle:ReceiveEndPlay()
                         if UE.IsValid(SkillInst) then
                             UGCPersistEffectSystem.RemoveSkillInstance(PlayerPawn, SkillInst)
                             ugcprint("[矿车武器] ✅ 已移除BasicVehicle技能实例")
-    if PlayerPawn then
-        local function EndTripIfSwitchedAway()
-            if PlayerPawn.IsMineCarMode and PlayerPawn:IsMineCarMode() and not IsCurrentWeaponMineCar(PlayerPawn) then
-                ugcprint("[MineCarTrip] basic weapon EndPlay confirmed switch away; ending trip")
-                RequestEndTrip(PlayerPawn)
-            else
-                ugcprint("[MineCarTrip] basic weapon EndPlay kept trip; current weapon is still mine car")
-            end
-        end
-        if UGCTimerUtility and UGCTimerUtility.CreateLuaTimer then
-            UGCTimerUtility.CreateLuaTimer(0.3, EndTripIfSwitchedAway, false)
-        else
-            EndTripIfSwitchedAway()
-        end
-        return
-    end
-    
-    if PlayerPawn and PlayerPawn.SetMineCarMode then
-        if UGCPersistEffectSystem then
-            local SkillPaths = {
-                "Asset/Blueprint/Prefabs/Skills/BasicVehicle.BasicVehicle_C"
-            }
-            for _, SkillPath in ipairs(SkillPaths) do
-                local FullPath = UGCGameSystem.GetUGCResourcesFullPath(SkillPath)
-                local SkillClass = UGCObjectUtility.LoadClass(FullPath)
-                if SkillClass then
-                    local ExistSkills = UGCPersistEffectSystem.GetSkillsByClass(PlayerPawn, SkillClass)
-                    if ExistSkills and #ExistSkills > 0 then
-                        for _, SkillInst in ipairs(ExistSkills) do
-                            if UE.IsValid(SkillInst) then
-                                UGCPersistEffectSystem.RemoveSkillInstance(PlayerPawn, SkillInst)
-                                ugcprint("[矿车武器] ✅ 已移除BasicVehicle技能实例")
-                            end
                         end
                     end
                 end
@@ -430,6 +377,11 @@ function Basic_MiningVehicle:ReceiveEndPlay()
         UGCTimerUtility.CreateLuaTimer(0.3, EndTripIfSwitchedAway, false)
     else
         EndTripIfSwitchedAway()
+    end
+
+    if PlayerPawn and PlayerPawn.SetMineCarMode then
+        PlayerPawn:SetMineCarMode(false)
+        ugcprint("[矿车武器] ✅ 成功取消矿车模式")
     end
 
     ugcprint("[矿车武器] ==================== 矿车武器销毁结束 ====================")

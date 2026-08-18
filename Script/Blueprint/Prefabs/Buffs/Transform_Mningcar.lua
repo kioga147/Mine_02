@@ -67,8 +67,6 @@ local function RemoveMineCarSkills(OwnerActor)
                 end)
             end
             for _, Skill in pairs(List) do
-        if Ok and type(Skills) == "table" then
-            for _, Skill in ipairs(Skills) do
                 RemoveSkillInstanceSafe(OwnerActor, Skill)
             end
         end
@@ -268,21 +266,17 @@ function Transform_Mningcar:ReapplyCurrentWeaponSkills()
         ugcprint("[矿车变身] 已有技能数量:", AnyExisting and 1 or 0)
 
         if not HasActiveSkill then
+            -- 清除陈旧/失效的技能实例，避免残留
             for _, Skill in pairs(Existing) do
                 if Skill ~= nil then
                     RemoveSkillInstanceSafe(PlayerPawn, Skill)
                 end
-        
-        local ExistSkills = UGCPersistEffectSystem.GetSkillsByClass(PlayerPawn, SkillClass)
-        ugcprint("[矿车变身] 已有技能数量:", #ExistSkills)
-        
-        if #ExistSkills == 0 then
+            end
+
             local Skill = UGCPersistEffectSystem.AddSkillByClass(PlayerPawn, SkillClass, -1)
             if Skill then
                 table.insert(self.CachedAppliedSkill, Skill)
                 ugcprint("[矿车变身] ✅ 成功添加BasicVehicle技能")
-                table.insert(self.CachedAppliedSkill, Skill)
-                
             else
                 ugcprint("[矿车变身] ❌ 添加技能失败")
             end

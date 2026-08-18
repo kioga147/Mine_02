@@ -1,4 +1,4 @@
-﻿local Action_PlayerLeave = {
+local Action_PlayerLeave = {
     -- 可配置参数定义，参数将显示在Action配置面板
     -- 例：
     -- MyIntParameter = 0

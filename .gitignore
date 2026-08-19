@@ -31,3 +31,6 @@ Desktop.ini
 .env
 .env.*
 !.env.example
+
+# WorkBuddy workspace metadata
+.workbuddy/

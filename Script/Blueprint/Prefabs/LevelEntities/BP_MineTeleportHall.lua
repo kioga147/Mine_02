@@ -20,7 +20,7 @@ do
             TeleportCost = 3000,
             SpawnCost = 0,
             SPAWN_ZONE_ID = 6,
-            SpawnPoint = { X = 20830, Y = 28740, Z = 192 },
+            SpawnPoint = { X = 21045.953125, Y = 28685.033203, Z = 201.396744 },
             Zones = {
                 [1] = { Name = "石滩" },
                 [2] = { Name = "煤矿场" },

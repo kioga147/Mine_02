@@ -1,37 +1,37 @@
 --- 矿区传送大厅配置（Mine_02-main）
 --- 解锁 8500 / 矿区传送 3000 / 出生点传送 0
---- 5个矿区按五角星布局环绕出生点(20830, 28740)，半径4200
+--- 传送落点已更新为新地图坐标（2026-08-20）
 --- ZoneId 1-5 = 矿区, ZoneId 6 = 出生点
 local MineTeleportConfig = {
     UnlockCost = 8500,
     TeleportCost = 3000,
     SpawnCost = 0,
     SPAWN_ZONE_ID = 6,
-    SpawnPoint = { X = 20830, Y = 28740, Z = 192 },
+    SpawnPoint = { X = 21045.953125, Y = 28685.033203, Z = 201.396744 },
     Zones = {
         [1] = {
             Name = "石滩",
-            PadX = 20830, PadY = 24940, PadZ = 220,
+            PadX = 21670.898438, PadY = 7234.638672, PadZ = 124.259644,
             HallX = 20830, HallY = 25040, HallZ = 220,
         },
         [2] = {
             Name = "煤矿场",
-            PadX = 24450, PadY = 27560, PadZ = 220,
+            PadX = 37576.707031, PadY = 7152.552734, PadZ = 124.240067,
             HallX = 24350, HallY = 27600, HallZ = 220,
         },
         [3] = {
             Name = "黄铜矿脉",
-            PadX = 23070, PadY = 31820, PadZ = 220,
+            PadX = 41571.179688, PadY = 32947.742188, PadZ = 124.224442,
             HallX = 23010, HallY = 31740, HallZ = 220,
         },
         [4] = {
             Name = "深层矿区",
-            PadX = 18600, PadY = 31820, PadZ = 220,
+            PadX = 36463.558594, PadY = 46880.234375, PadZ = 124.236160,
             HallX = 18660, HallY = 31740, HallZ = 220,
         },
         [5] = {
             Name = "宝石矿区",
-            PadX = 17220, PadY = 27560, PadZ = 220,
+            PadX = 13395.021484, PadY = 51551.093750, PadZ = 124.224442,
             HallX = 17320, HallY = 27600, HallZ = 220,
         },
     },

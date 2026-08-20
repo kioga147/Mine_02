@@ -44,6 +44,14 @@ do
     end
 end
 
+local EnterButtonManager = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire('Script.Common.EnterButtonManager')
+    end)
+    if Ok and type(Mod) == 'table' then EnterButtonManager = Mod else EnterButtonManager = {} end
+end
+
 local BP_AutoMineFactoryFacility = {
     bLocalPlayerInside = false,
     bPromptDismissed = false,
@@ -51,7 +59,6 @@ local BP_AutoMineFactoryFacility = {
     bPromptOpening = false,
     bOverlapBound = false,
     SelectedWorkerId = 1,
-    RefreshTimer = nil,
 }
 
 local PROMPT_UI_PATH = "Asset/Blueprint/Prefabs/UI/WBP_JadeFacilityPrompt.WBP_JadeFacilityPrompt_C"
@@ -164,11 +171,6 @@ function BP_AutoMineFactoryFacility:ReceiveBeginPlay()
 
     pcall(function()
         Trigger.bGenerateOverlapEvents = true
-        if Trigger.SetSphereRadius then
-            Trigger:SetSphereRadius(250, true)
-        elseif Trigger.SphereRadius ~= nil then
-            Trigger.SphereRadius = 250
-        end
     end)
 
     if Trigger.OnComponentBeginOverlap then
@@ -182,7 +184,6 @@ end
 
 function BP_AutoMineFactoryFacility:ReceiveEndPlay()
     self:UnbindPCCallbacks()
-    self:StopRefreshTimer()
     local Trigger = self.InteractTrigger
     if Trigger and self.bOverlapBound then
         if Trigger.OnComponentBeginOverlap then
@@ -203,7 +204,7 @@ function BP_AutoMineFactoryFacility:OnTriggerBeginOverlap(
     end
     self.bLocalPlayerInside = true
     ugcprint("[AutoMineFactory] 本机玩家进入全自动采矿工厂")
-    self:ShowPrompt()
+    self:ShowEnterButton()
 end
 
 function BP_AutoMineFactoryFacility:OnTriggerEndOverlap(
@@ -212,6 +213,7 @@ function BP_AutoMineFactoryFacility:OnTriggerEndOverlap(
     self.bLocalPlayerInside = false
     self.bPromptDismissed = false
     ugcprint("[AutoMineFactory] 本机玩家离开全自动采矿工厂")
+    EnterButtonManager.Hide(GetLocalPC())
     self:HidePrompt()
 end
 
@@ -244,34 +246,6 @@ function BP_AutoMineFactoryFacility:UnbindPCCallbacks()
     PC.OnAutoMineFactoryStateChanged = nil
     PC.OnAutoMineFactoryKeepJadeToggled = nil
     PC.OnAutoMineFactoryWorkerChanged = nil
-end
-
-function BP_AutoMineFactoryFacility:StartRefreshTimer()
-    self:StopRefreshTimer()
-    if UGCTimerUtility == nil or UGCTimerUtility.CreateLuaTimer == nil then return end
-    local Facility = self
-    local Ok, Handle = pcall(function()
-        return UGCTimerUtility.CreateLuaTimer(1.0, function()
-            if Facility.bLocalPlayerInside and Facility.PromptWidget ~= nil then
-                if IsLocalPlayerMineCarMode() then
-                    Facility.bPromptDismissed = true
-                    Facility:HidePrompt()
-                    return
-                end
-                Facility:RefreshPromptUI()
-            end
-        end, true)
-    end)
-    if Ok then self.RefreshTimer = Handle end
-end
-
-function BP_AutoMineFactoryFacility:StopRefreshTimer()
-    local Handle = self.RefreshTimer
-    self.RefreshTimer = nil
-    if Handle == nil then return end
-    if UGCTimerUtility and UGCTimerUtility.RemoveLuaTimer then
-        pcall(function() UGCTimerUtility.RemoveLuaTimer(Handle) end)
-    end
 end
 
 function BP_AutoMineFactoryFacility:GetStatus()
@@ -440,6 +414,24 @@ function BP_AutoMineFactoryFacility:RefreshPromptUI()
     SetTextColor(PromptText, { R = 0.08, G = 0.10, B = 0.12, A = 1 })
 end
 
+--- 显示进入确认按钮；点击后打开建筑 UI
+function BP_AutoMineFactoryFacility:ShowEnterButton()
+    if self.bPromptDismissed then
+        return
+    end
+    if IsLocalPlayerMineCarMode() then
+        return
+    end
+    if self.PromptWidget ~= nil or self.bPromptOpening then
+        return
+    end
+    if EnterButtonManager and EnterButtonManager.Show then
+        EnterButtonManager.Show('全自动采矿工厂', function()
+            self:ShowPrompt()
+        end)
+    end
+end
+
 function BP_AutoMineFactoryFacility:ShowPrompt()
     if IsLocalPlayerMineCarMode() then
         self.bPromptDismissed = true
@@ -450,7 +442,6 @@ function BP_AutoMineFactoryFacility:ShowPrompt()
     if self.PromptWidget ~= nil or self.bPromptOpening then
         if self.PromptWidget then
             self:RefreshPromptUI()
-            if self.RefreshTimer == nil then self:StartRefreshTimer() end
         end
         return
     end
@@ -487,14 +478,12 @@ function BP_AutoMineFactoryFacility:ShowPrompt()
         end
         self:RefreshPromptUI()
         ugcprint("[AutoMineFactory] 全自动采矿工厂面板已显示")
-        self:StartRefreshTimer()
     end)
 end
 
 function BP_AutoMineFactoryFacility:HidePrompt()
     self.bPromptOpening = false
     self:UnbindPCCallbacks()
-    self:StopRefreshTimer()
     local Widget = self.PromptWidget
     self.PromptWidget = nil
     if Widget == nil then return end

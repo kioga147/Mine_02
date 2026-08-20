@@ -1,5 +1,5 @@
 ---@class BP_MinerShop_C:AActor
----@field InteractTrigger USphereComponent
+---@field InteractTrigger UDragonBoatBoxTriggerComponent
 ---@field BuildingMesh UStaticMeshComponent
 ---@field DefaultSceneRoot USceneComponent
 --Edit Below--
@@ -10,6 +10,13 @@ do
     end)
     if ok and type(mod) == 'table' then ShopConfig = mod else ShopConfig = {} end
 end
+local EnterButtonManager = nil
+do
+    local ok, mod = pcall(function()
+        return UGCGameSystem.UGCRequire('Script.Common.EnterButtonManager')
+    end)
+    if ok and type(mod) == 'table' then EnterButtonManager = mod else EnterButtonManager = {} end
+end
 
 local BP_MinerShop = {
     bLocalPlayerInside = false,
@@ -19,12 +26,9 @@ local BP_MinerShop = {
     bPromptOpening = false,
     OwnedToolCache = {},
     BpLevelCache = 1,
-    RefreshTimer = nil,
 }
 
 local PROMPT_UI_PATH = 'Asset/Blueprint/Prefabs/UI/WBP_JadeFacilityPrompt.WBP_JadeFacilityPrompt_C'
-local PROMPT_HIDE_DISTANCE = 420
-local PROMPT_REFRESH_INTERVAL = 0.5
 
 local function GetLocalPC()
     return UGCGameSystem.GetLocalPlayerController()
@@ -52,48 +56,6 @@ local function SetEnabled(Widget, bEnable)
     end
 end
 
-local function GetActorLocationSafe(Actor)
-    if Actor == nil then
-        return nil
-    end
-    local Ok, Loc = pcall(function()
-        return Actor:K2_GetActorLocation()
-    end)
-    if Ok then
-        return Loc
-    end
-    return nil
-end
-
-local function GetComponentLocationSafe(Component)
-    if Component == nil then
-        return nil
-    end
-    local Ok, Loc = pcall(function()
-        return Component:K2_GetComponentLocation()
-    end)
-    if Ok then
-        return Loc
-    end
-    return nil
-end
-
-local function GetDistanceSq(A, B)
-    if A == nil or B == nil then
-        return nil
-    end
-    local AX = tonumber(A.X or A.x) or 0
-    local AY = tonumber(A.Y or A.y) or 0
-    local AZ = tonumber(A.Z or A.z) or 0
-    local BX = tonumber(B.X or B.x) or 0
-    local BY = tonumber(B.Y or B.y) or 0
-    local BZ = tonumber(B.Z or B.z) or 0
-    local DX = AX - BX
-    local DY = AY - BY
-    local DZ = AZ - BZ
-    return DX * DX + DY * DY + DZ * DZ
-end
-
 function BP_MinerShop:IsCurrentToolOwned()
     local pc = GetLocalPC()
     if not pc then return false end
@@ -110,72 +72,39 @@ end
 function BP_MinerShop:ReceiveBeginPlay()
     local tri = self.InteractTrigger
     if not tri then return end
-    if tri.SetGenerateOverlapEvents then
-        tri:SetGenerateOverlapEvents(true)
-    else
+    pcall(function()
         tri.bGenerateOverlapEvents = true
-    end
-    if tri.SetSphereRadius then
-        tri:SetSphereRadius(80)
-    elseif tri.SphereRadius ~= nil then
-        tri.SphereRadius = 80
-    end
+    end)
     tri.OnComponentBeginOverlap:Add(self.OnEnter, self)
     tri.OnComponentEndOverlap:Add(self.OnLeave, self)
-    self:StartRefreshTimer()
 end
 
 function BP_MinerShop:OnEnter(_, OtherActor)
     if OtherActor ~= UGCGameSystem.GetLocalPlayerPawn() then return end
     self.bLocalPlayerInside = true
     if self.bPromptDismissed then return end
-    self:ShowPrompt()
+    self:ShowEnterButton()
 end
 
 function BP_MinerShop:OnLeave(_, OtherActor)
     if OtherActor ~= UGCGameSystem.GetLocalPlayerPawn() then return end
     self.bLocalPlayerInside = false
     self.bPromptDismissed = false
+    EnterButtonManager.Hide(GetLocalPC())
     self:HidePrompt()
 end
 
-function BP_MinerShop:IsLocalPlayerNear(Distance)
-    local LocalPawn = UGCGameSystem.GetLocalPlayerPawn()
-    local PawnLoc = GetActorLocationSafe(LocalPawn)
-    local ShopLoc = GetComponentLocationSafe(self.InteractTrigger) or GetActorLocationSafe(self)
-    local DistSq = GetDistanceSq(PawnLoc, ShopLoc)
-    if DistSq == nil then
-        return false
-    end
-    return DistSq <= Distance * Distance
-end
-
-function BP_MinerShop:StartRefreshTimer()
-    self:StopRefreshTimer()
-    if UGCTimerUtility == nil or UGCTimerUtility.CreateLuaTimer == nil then
+--- 显示进入确认按钮；点击后打开建筑 UI
+function BP_MinerShop:ShowEnterButton()
+    if self.bPromptDismissed then
         return
     end
-    local Shop = self
-    local Ok, Handle = pcall(function()
-        return UGCTimerUtility.CreateLuaTimer(PROMPT_REFRESH_INTERVAL, function()
-            if Shop.PromptWidget ~= nil and not Shop:IsLocalPlayerNear(PROMPT_HIDE_DISTANCE) then
-                Shop.bLocalPlayerInside = false
-                Shop.bPromptDismissed = false
-                Shop:HidePrompt()
-            end
-        end, true)
-    end)
-    if Ok then
-        self.RefreshTimer = Handle
+    if self.PromptWidget ~= nil or self.bPromptOpening then
+        return
     end
-end
-
-function BP_MinerShop:StopRefreshTimer()
-    local Handle = self.RefreshTimer
-    self.RefreshTimer = nil
-    if Handle ~= nil and UGCTimerUtility and UGCTimerUtility.RemoveLuaTimer then
-        pcall(function()
-            UGCTimerUtility.RemoveLuaTimer(Handle)
+    if EnterButtonManager and EnterButtonManager.Show then
+        EnterButtonManager.Show('矿工商店', function()
+            self:ShowPrompt()
         end)
     end
 end
@@ -328,7 +257,6 @@ function BP_MinerShop:RefreshUI()
     SetText(GetW(W, 'Txt_Prompt'), detail)
 end
 function BP_MinerShop:ReceiveEndPlay()
-    self:StopRefreshTimer()
     self:HidePrompt()
     local tri = self.InteractTrigger
     if tri then

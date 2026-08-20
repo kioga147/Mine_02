@@ -1,23 +1,27 @@
 ---@class BP_JadeAppraisalFacility_C:AActor
+---@field InteractTrigger UDragonBoatBoxTriggerComponent
 ---@field PromptAnchor USceneComponent
----@field InteractTrigger USphereComponent
 ---@field BuildingMesh UStaticMeshComponent
 ---@field DefaultSceneRoot1 USceneComponent
 ---@field DefaultSceneRoot USceneComponent
 --Edit Below--
+local EnterButtonManager = nil
+do
+    local ok, mod = pcall(function()
+        return UGCGameSystem.UGCRequire('Script.Common.EnterButtonManager')
+    end)
+    if ok and type(mod) == 'table' then EnterButtonManager = mod else EnterButtonManager = {} end
+end
+
 local BP_JadeAppraisalFacility = {
     bLocalPlayerInside = false,
     bPromptDismissed = false,
     PromptWidget = nil,
     bPromptOpening = false,
     bOverlapBound = false,
-    RefreshTimer = nil,
 }
 
 local PROMPT_UI_PATH = "Asset/Blueprint/Prefabs/UI/WBP_JadeFacilityPrompt.WBP_JadeFacilityPrompt_C"
-local PROMPT_SHOW_DISTANCE = 360
-local PROMPT_HIDE_DISTANCE = 520
-local PROMPT_REFRESH_INTERVAL = 0.5
 
 local function IsLocalPlayerPawn(OtherActor)
     if OtherActor == nil then
@@ -35,48 +39,10 @@ local function GetLocalPC()
     return UGCGameSystem.GetLocalPlayerController()
 end
 
-local function GetActorLocationSafe(Actor)
-    if Actor == nil then
-        return nil
-    end
-    local Ok, Loc = pcall(function()
-        return Actor:K2_GetActorLocation()
-    end)
-    if Ok then
-        return Loc
-    end
-    return nil
-end
-
-local function GetComponentLocationSafe(Component)
-    if Component == nil then
-        return nil
-    end
-    local Ok, Loc = pcall(function()
-        return Component:K2_GetComponentLocation()
-    end)
-    if Ok then
-        return Loc
-    end
-    return nil
-end
-
-local function GetDistanceSq(A, B)
-    if A == nil or B == nil then
-        return nil
-    end
-    local DX = (tonumber(A.X) or 0) - (tonumber(B.X) or 0)
-    local DY = (tonumber(A.Y) or 0) - (tonumber(B.Y) or 0)
-    local DZ = (tonumber(A.Z) or 0) - (tonumber(B.Z) or 0)
-    return DX * DX + DY * DY + DZ * DZ
-end
-
 function BP_JadeAppraisalFacility:ReceiveBeginPlay()
     if BP_JadeAppraisalFacility.SuperClass and BP_JadeAppraisalFacility.SuperClass.ReceiveBeginPlay then
         pcall(BP_JadeAppraisalFacility.SuperClass.ReceiveBeginPlay, self)
     end
-
-    self:StartRefreshTimer()
 
     local Trigger = GetInteractTrigger(self)
     if Trigger == nil then
@@ -102,7 +68,6 @@ function BP_JadeAppraisalFacility:ReceiveBeginPlay()
 end
 
 function BP_JadeAppraisalFacility:ReceiveEndPlay()
-    self:StopRefreshTimer()
     self:UnbindPCCallbacks()
     local Trigger = GetInteractTrigger(self)
     if Trigger and self.bOverlapBound then
@@ -138,7 +103,7 @@ function BP_JadeAppraisalFacility:OnTriggerBeginOverlap(
     end
     self.bLocalPlayerInside = true
     ugcprint("[JadeFacility] 本机玩家进入范围")
-    self:ShowPrompt()
+    self:ShowEnterButton()
 end
 
 function BP_JadeAppraisalFacility:OnTriggerEndOverlap(
@@ -146,73 +111,11 @@ function BP_JadeAppraisalFacility:OnTriggerEndOverlap(
     if not IsLocalPlayerPawn(OtherActor) then
         return
     end
-    if self:IsLocalPlayerNear(PROMPT_HIDE_DISTANCE) then
-        return
-    end
     self.bLocalPlayerInside = false
     self.bPromptDismissed = false
     ugcprint("[JadeFacility] 本机玩家离开范围")
+    EnterButtonManager.Hide(GetLocalPC())
     self:HidePrompt()
-end
-
-function BP_JadeAppraisalFacility:IsLocalPlayerNear(Distance)
-    local LocalPawn = UGCGameSystem.GetLocalPlayerPawn()
-    local PawnLoc = GetActorLocationSafe(LocalPawn)
-    local FacilityLoc = GetComponentLocationSafe(self.InteractTrigger)
-        or GetComponentLocationSafe(self.PromptAnchor)
-        or GetActorLocationSafe(self)
-    local DistSq = GetDistanceSq(PawnLoc, FacilityLoc)
-    if DistSq == nil then
-        return false
-    end
-    return DistSq <= Distance * Distance
-end
-
-function BP_JadeAppraisalFacility:StartRefreshTimer()
-    self:StopRefreshTimer()
-    if UGCTimerUtility == nil or UGCTimerUtility.CreateLuaTimer == nil then
-        return
-    end
-    local Facility = self
-    local Ok, Handle = pcall(function()
-        return UGCTimerUtility.CreateLuaTimer(PROMPT_REFRESH_INTERVAL, function()
-            local bNearShow = Facility:IsLocalPlayerNear(PROMPT_SHOW_DISTANCE)
-            local bNearHide = Facility:IsLocalPlayerNear(PROMPT_HIDE_DISTANCE)
-
-            if bNearShow then
-                Facility.bLocalPlayerInside = true
-                if Facility.bPromptDismissed ~= true then
-                    Facility:ShowPrompt()
-                end
-                if Facility.PromptWidget ~= nil then
-                    Facility:RefreshPromptUI()
-                end
-                return
-            end
-
-            if not bNearHide then
-                Facility.bLocalPlayerInside = false
-                Facility.bPromptDismissed = false
-                Facility:HidePrompt()
-            end
-        end, true)
-    end)
-    if Ok then
-        self.RefreshTimer = Handle
-    end
-end
-
-function BP_JadeAppraisalFacility:StopRefreshTimer()
-    local Handle = self.RefreshTimer
-    self.RefreshTimer = nil
-    if Handle == nil then
-        return
-    end
-    if UGCTimerUtility and UGCTimerUtility.RemoveLuaTimer then
-        pcall(function()
-            UGCTimerUtility.RemoveLuaTimer(Handle)
-        end)
-    end
 end
 
 function BP_JadeAppraisalFacility:BindPCCallbacks()
@@ -272,6 +175,21 @@ function BP_JadeAppraisalFacility:RefreshPromptUI()
     pcall(function()
         Widget:RefreshShopState(Status)
     end)
+end
+
+--- 显示进入确认按钮；点击后打开建筑 UI
+function BP_JadeAppraisalFacility:ShowEnterButton()
+    if self.bPromptDismissed then
+        return
+    end
+    if self.PromptWidget ~= nil or self.bPromptOpening then
+        return
+    end
+    if EnterButtonManager and EnterButtonManager.Show then
+        EnterButtonManager.Show('玉石鉴定所', function()
+            self:ShowPrompt()
+        end)
+    end
 end
 
 function BP_JadeAppraisalFacility:ShowPrompt()

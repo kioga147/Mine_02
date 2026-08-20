@@ -1,6 +1,5 @@
----@class BP_JadeAppraisalFacility_C:AActor
----@field PromptAnchor USceneComponent
----@field InteractTrigger USphereComponent
+---@class BP_OreSmeltingFacility_C:AActor
+---@field InteractTrigger UDragonBoatBoxTriggerComponent
 ---@field BuildingMesh UStaticMeshComponent
 ---@field DefaultSceneRoot1 USceneComponent
 ---@field DefaultSceneRoot USceneComponent
@@ -93,6 +92,14 @@ do
     end
 end
 
+local EnterButtonManager = nil
+do
+    local ok, mod = pcall(function()
+        return UGCGameSystem.UGCRequire('Script.Common.EnterButtonManager')
+    end)
+    if ok and type(mod) == 'table' then EnterButtonManager = mod else EnterButtonManager = {} end
+end
+
 local BP_OreSmeltingFacility = {
     bLocalPlayerInside = false,
     bPromptDismissed = false,
@@ -105,13 +112,9 @@ local BP_OreSmeltingFacility = {
     --- 0=金币 1=绿洲币
     PayType = 0,
     LastFurnaceCount = 0,
-    RefreshTimer = nil,
 }
 
 local PROMPT_UI_PATH = "Asset/Blueprint/Prefabs/UI/WBP_JadeFacilityPrompt.WBP_JadeFacilityPrompt_C"
-local PROMPT_SHOW_DISTANCE = 310
-local PROMPT_HIDE_DISTANCE = 470
-local PROMPT_REFRESH_INTERVAL = 0.5
 local SMELT_STATE_IDLE = 0
 local SMELT_STATE_RUNNING = 1
 local SMELT_STATE_READY = 2
@@ -130,48 +133,6 @@ end
 
 local function GetLocalPC()
     return UGCGameSystem.GetLocalPlayerController()
-end
-
-local function GetActorLocationSafe(Actor)
-    if Actor == nil then
-        return nil
-    end
-    local Ok, Loc = pcall(function()
-        return Actor:K2_GetActorLocation()
-    end)
-    if Ok then
-        return Loc
-    end
-    return nil
-end
-
-local function GetComponentLocationSafe(Component)
-    if Component == nil then
-        return nil
-    end
-    local Ok, Loc = pcall(function()
-        return Component:K2_GetComponentLocation()
-    end)
-    if Ok then
-        return Loc
-    end
-    return nil
-end
-
-local function GetDistanceSq(A, B)
-    if A == nil or B == nil then
-        return nil
-    end
-    local AX = tonumber(A.X or A.x) or 0
-    local AY = tonumber(A.Y or A.y) or 0
-    local AZ = tonumber(A.Z or A.z) or 0
-    local BX = tonumber(B.X or B.x) or 0
-    local BY = tonumber(B.Y or B.y) or 0
-    local BZ = tonumber(B.Z or B.z) or 0
-    local DX = AX - BX
-    local DY = AY - BY
-    local DZ = AZ - BZ
-    return DX * DX + DY * DY + DZ * DZ
 end
 
 local function GetW(Widget, Name)
@@ -340,7 +301,6 @@ function BP_OreSmeltingFacility:ReceiveBeginPlay()
     self.SelectedCount = 1
     self.PayType = 0
     self.LastFurnaceCount = 0
-    self:StartRefreshTimer()
 
     local Trigger = GetInteractTrigger(self)
     if Trigger == nil then
@@ -354,11 +314,6 @@ function BP_OreSmeltingFacility:ReceiveBeginPlay()
 
     pcall(function()
         Trigger.bGenerateOverlapEvents = true
-        if Trigger.SetSphereRadius then
-            Trigger:SetSphereRadius(280, true)
-        elseif Trigger.SphereRadius ~= nil then
-            Trigger.SphereRadius = 280
-        end
         -- 避免新建蓝图默认无碰撞导致无法触发 Overlap
         if Trigger.SetCollisionProfileName then
             Trigger:SetCollisionProfileName("OverlapAllDynamic")
@@ -382,7 +337,6 @@ function BP_OreSmeltingFacility:ReceiveBeginPlay()
 end
 
 function BP_OreSmeltingFacility:ReceiveEndPlay()
-    self:StopRefreshTimer()
     self:UnbindPCCallbacks()
     local Trigger = GetInteractTrigger(self)
     if Trigger and self.bOverlapBound then
@@ -418,7 +372,7 @@ function BP_OreSmeltingFacility:OnTriggerBeginOverlap(
     end
     self.bLocalPlayerInside = true
     ugcprint("[SmeltFacility] 本机玩家进入加工厂")
-    self:ShowPrompt()
+    self:ShowEnterButton()
 end
 
 function BP_OreSmeltingFacility:OnTriggerEndOverlap(
@@ -429,18 +383,8 @@ function BP_OreSmeltingFacility:OnTriggerEndOverlap(
     self.bLocalPlayerInside = false
     self.bPromptDismissed = false
     ugcprint("[SmeltFacility] 本机玩家离开加工厂")
+    EnterButtonManager.Hide(GetLocalPC())
     self:HidePrompt()
-end
-
-function BP_OreSmeltingFacility:IsLocalPlayerNear(Distance)
-    local LocalPawn = UGCGameSystem.GetLocalPlayerPawn()
-    local PawnLoc = GetActorLocationSafe(LocalPawn)
-    local FacilityLoc = GetComponentLocationSafe(self.InteractTrigger) or GetActorLocationSafe(self)
-    local DistSq = GetDistanceSq(PawnLoc, FacilityLoc)
-    if DistSq == nil then
-        return false
-    end
-    return DistSq <= Distance * Distance
 end
 
 function BP_OreSmeltingFacility:BindPCCallbacks()
@@ -474,50 +418,6 @@ function BP_OreSmeltingFacility:UnbindPCCallbacks()
     PC.OnSmeltNotify = nil
     PC.OnSmelterUnlocked = nil
     PC.OnSmelterStateChanged = nil
-end
-
-function BP_OreSmeltingFacility:StartRefreshTimer()
-    self:StopRefreshTimer()
-    if UGCTimerUtility == nil or UGCTimerUtility.CreateLuaTimer == nil then
-        return
-    end
-    local Facility = self
-    local Ok, Handle = pcall(function()
-        return UGCTimerUtility.CreateLuaTimer(PROMPT_REFRESH_INTERVAL, function()
-            local bNearShow = Facility:IsLocalPlayerNear(PROMPT_SHOW_DISTANCE)
-            local bNearHide = Facility:IsLocalPlayerNear(PROMPT_HIDE_DISTANCE)
-            if bNearShow then
-                Facility.bLocalPlayerInside = true
-                if Facility.bPromptDismissed ~= true then
-                    Facility:ShowPrompt()
-                end
-            end
-            if Facility.bLocalPlayerInside and Facility.PromptWidget ~= nil then
-                Facility:RefreshPromptUI()
-            end
-            if not bNearHide then
-                Facility.bLocalPlayerInside = false
-                Facility.bPromptDismissed = false
-                Facility:HidePrompt()
-            end
-        end, true)
-    end)
-    if Ok then
-        self.RefreshTimer = Handle
-    end
-end
-
-function BP_OreSmeltingFacility:StopRefreshTimer()
-    local Handle = self.RefreshTimer
-    self.RefreshTimer = nil
-    if Handle == nil then
-        return
-    end
-    if UGCTimerUtility and UGCTimerUtility.RemoveLuaTimer then
-        pcall(function()
-            UGCTimerUtility.RemoveLuaTimer(Handle)
-        end)
-    end
 end
 
 function BP_OreSmeltingFacility:GetStatus()
@@ -723,6 +623,21 @@ function BP_OreSmeltingFacility:RefreshPromptUI()
     local PromptText = GetW(Widget, "Txt_Prompt")
     FitPromptText(PromptText)
     SetText(PromptText, Line)
+end
+
+--- 显示进入确认按钮；点击后打开建筑 UI
+function BP_OreSmeltingFacility:ShowEnterButton()
+    if self.bPromptDismissed then
+        return
+    end
+    if self.PromptWidget ~= nil or self.bPromptOpening then
+        return
+    end
+    if EnterButtonManager and EnterButtonManager.Show then
+        EnterButtonManager.Show('矿石加工厂', function()
+            self:ShowPrompt()
+        end)
+    end
 end
 
 function BP_OreSmeltingFacility:ShowPrompt()

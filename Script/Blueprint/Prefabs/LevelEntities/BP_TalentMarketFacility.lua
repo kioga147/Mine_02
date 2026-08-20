@@ -1,7 +1,7 @@
----@class BP_TalentMarketFacility_C:BP_MineTeleportHall_C
----@field BuildingMesh UStaticMeshComponent
----@field InteractTrigger USphereComponent
+---@class BP_TalentMarketFacility_C:AActor
+---@field InteractTrigger UDragonBoatBoxTriggerComponent
 ---@field PromptAnchor USceneComponent
+---@field BuildingMesh UStaticMeshComponent
 ---@field DefaultSceneRoot1 USceneComponent
 ---@field DefaultSceneRoot USceneComponent
 --Edit Below--
@@ -43,6 +43,14 @@ do
     end
 end
 
+local EnterButtonManager = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire('Script.Common.EnterButtonManager')
+    end)
+    if Ok and type(Mod) == 'table' then EnterButtonManager = Mod else EnterButtonManager = {} end
+end
+
 local BP_TalentMarketFacility = {
     bLocalPlayerInside = false,
     bPromptDismissed = false,
@@ -50,7 +58,6 @@ local BP_TalentMarketFacility = {
     bPromptOpening = false,
     bOverlapBound = false,
     SelectedWorkerId = 1,
-    RefreshTimer = nil,
 }
 
 local PROMPT_UI_PATH = "Asset/Blueprint/Prefabs/UI/WBP_JadeFacilityPrompt.WBP_JadeFacilityPrompt_C"
@@ -244,11 +251,6 @@ function BP_TalentMarketFacility:ReceiveBeginPlay()
 
     pcall(function()
         Trigger.bGenerateOverlapEvents = true
-        if Trigger.SetSphereRadius then
-            Trigger:SetSphereRadius(250, true)
-        elseif Trigger.SphereRadius ~= nil then
-            Trigger.SphereRadius = 250
-        end
     end)
 
     if Trigger.OnComponentBeginOverlap then
@@ -262,7 +264,6 @@ end
 
 function BP_TalentMarketFacility:ReceiveEndPlay()
     self:UnbindPCCallbacks()
-    self:StopRefreshTimer()
     local Trigger = self.InteractTrigger
     if Trigger and self.bOverlapBound then
         if Trigger.OnComponentBeginOverlap then
@@ -287,7 +288,7 @@ function BP_TalentMarketFacility:OnTriggerBeginOverlap(
     end
     self.bLocalPlayerInside = true
     ugcprint("[TalentMarket] 本机玩家进入人才市场")
-    self:ShowPrompt()
+    self:ShowEnterButton()
 end
 
 function BP_TalentMarketFacility:OnTriggerEndOverlap(
@@ -298,6 +299,7 @@ function BP_TalentMarketFacility:OnTriggerEndOverlap(
     self.bLocalPlayerInside = false
     self.bPromptDismissed = false
     ugcprint("[TalentMarket] 本机玩家离开人才市场")
+    EnterButtonManager.Hide(GetLocalPC())
     self:HidePrompt()
 end
 
@@ -332,42 +334,6 @@ function BP_TalentMarketFacility:UnbindPCCallbacks()
     PC.OnTalentMarketNotify = nil
     PC.OnTalentMarketUnlocked = nil
     PC.OnTalentJobChanged = nil
-end
-
-function BP_TalentMarketFacility:StartRefreshTimer()
-    self:StopRefreshTimer()
-    if UGCTimerUtility == nil or UGCTimerUtility.CreateLuaTimer == nil then
-        return
-    end
-    local Facility = self
-    local Ok, Handle = pcall(function()
-        return UGCTimerUtility.CreateLuaTimer(1.0, function()
-            if Facility.bLocalPlayerInside and Facility.PromptWidget ~= nil then
-                if IsLocalPlayerMineCarMode() then
-                    Facility.bPromptDismissed = true
-                    Facility:HidePrompt()
-                    return
-                end
-                Facility:RefreshPromptUI()
-            end
-        end, true)
-    end)
-    if Ok then
-        self.RefreshTimer = Handle
-    end
-end
-
-function BP_TalentMarketFacility:StopRefreshTimer()
-    local Handle = self.RefreshTimer
-    self.RefreshTimer = nil
-    if Handle == nil then
-        return
-    end
-    if UGCTimerUtility and UGCTimerUtility.RemoveLuaTimer then
-        pcall(function()
-            UGCTimerUtility.RemoveLuaTimer(Handle)
-        end)
-    end
 end
 
 function BP_TalentMarketFacility:GetStatus()
@@ -507,6 +473,24 @@ function BP_TalentMarketFacility:RefreshPromptUI()
     SetTextColor(PromptText, { R = 0.08, G = 0.10, B = 0.12, A = 1 })
 end
 
+--- 显示进入确认按钮；点击后打开建筑 UI
+function BP_TalentMarketFacility:ShowEnterButton()
+    if self.bPromptDismissed then
+        return
+    end
+    if IsLocalPlayerMineCarMode() then
+        return
+    end
+    if self.PromptWidget ~= nil or self.bPromptOpening then
+        return
+    end
+    if EnterButtonManager and EnterButtonManager.Show then
+        EnterButtonManager.Show('人才市场', function()
+            self:ShowPrompt()
+        end)
+    end
+end
+
 function BP_TalentMarketFacility:ShowPrompt()
     if IsLocalPlayerMineCarMode() then
         self.bPromptDismissed = true
@@ -517,9 +501,6 @@ function BP_TalentMarketFacility:ShowPrompt()
     if self.PromptWidget ~= nil or self.bPromptOpening then
         if self.PromptWidget then
             self:RefreshPromptUI()
-            if self.RefreshTimer == nil then
-                self:StartRefreshTimer()
-            end
         end
         return
     end
@@ -568,14 +549,12 @@ function BP_TalentMarketFacility:ShowPrompt()
         end
         self:RefreshPromptUI()
         ugcprint("[TalentMarket] 人才市场面板已显示")
-        self:StartRefreshTimer()
     end)
 end
 
 function BP_TalentMarketFacility:HidePrompt()
     self.bPromptOpening = false
     self:UnbindPCCallbacks()
-    self:StopRefreshTimer()
     local Widget = self.PromptWidget
     self.PromptWidget = nil
     if Widget == nil then

@@ -1,7 +1,7 @@
----@class BP_VehicleRepairFacility_C:BP_MineTeleportHall_C
----@field BuildingMesh UStaticMeshComponent
----@field InteractTrigger USphereComponent
+---@class BP_VehicleRepairFacility_C:AActor
+---@field InteractTrigger UDragonBoatBoxTriggerComponent
 ---@field PromptAnchor USceneComponent
+---@field BuildingMesh UStaticMeshComponent
 ---@field DefaultSceneRoot1 USceneComponent
 ---@field DefaultSceneRoot USceneComponent
 --Edit Below--
@@ -43,13 +43,20 @@ do
     end
 end
 
+local EnterButtonManager = nil
+do
+    local Ok, Mod = pcall(function()
+        return UGCGameSystem.UGCRequire('Script.Common.EnterButtonManager')
+    end)
+    if Ok and type(Mod) == 'table' then EnterButtonManager = Mod else EnterButtonManager = {} end
+end
+
 local BP_VehicleRepairFacility = {
     bLocalPlayerInside = false,
     PromptWidget = nil,
     bPromptOpening = false,
     bOverlapBound = false,
     SelectedVehicleId = 1,
-    RefreshTimer = nil,
 }
 
 local PROMPT_UI_PATH = "Asset/Blueprint/Prefabs/UI/WBP_JadeFacilityPrompt.WBP_JadeFacilityPrompt_C"
@@ -147,11 +154,6 @@ function BP_VehicleRepairFacility:ReceiveBeginPlay()
 
     pcall(function()
         Trigger.bGenerateOverlapEvents = true
-        if Trigger.SetSphereRadius then
-            Trigger:SetSphereRadius(250, true)
-        elseif Trigger.SphereRadius ~= nil then
-            Trigger.SphereRadius = 250
-        end
     end)
 
     if Trigger.OnComponentBeginOverlap then
@@ -165,7 +167,6 @@ end
 
 function BP_VehicleRepairFacility:ReceiveEndPlay()
     self:UnbindPCCallbacks()
-    self:StopRefreshTimer()
     local Trigger = self.InteractTrigger
     if Trigger and self.bOverlapBound then
         if Trigger.OnComponentBeginOverlap then
@@ -190,7 +191,7 @@ function BP_VehicleRepairFacility:OnTriggerBeginOverlap(
     end
     self.bLocalPlayerInside = true
     ugcprint("[VehicleRepair] 本机玩家进入采矿车维修处")
-    self:ShowPrompt()
+    self:ShowEnterButton()
 end
 
 function BP_VehicleRepairFacility:OnTriggerEndOverlap(
@@ -200,6 +201,7 @@ function BP_VehicleRepairFacility:OnTriggerEndOverlap(
     end
     self.bLocalPlayerInside = false
     ugcprint("[VehicleRepair] 本机玩家离开采矿车维修处")
+    EnterButtonManager.Hide(GetLocalPC())
     self:HidePrompt()
 end
 
@@ -234,41 +236,6 @@ function BP_VehicleRepairFacility:UnbindPCCallbacks()
     PC.OnVehicleRepairNotify = nil
     PC.OnVehicleRepairUnlocked = nil
     PC.OnVehicleRepairStateChanged = nil
-end
-
-function BP_VehicleRepairFacility:StartRefreshTimer()
-    self:StopRefreshTimer()
-    if UGCTimerUtility == nil or UGCTimerUtility.CreateLuaTimer == nil then
-        return
-    end
-    local Facility = self
-    local Ok, Handle = pcall(function()
-        return UGCTimerUtility.CreateLuaTimer(1.0, function()
-            if Facility.bLocalPlayerInside and Facility.PromptWidget ~= nil then
-                if IsLocalPlayerMineCarMode() then
-                    Facility:HidePrompt()
-                    return
-                end
-                Facility:RefreshPromptUI()
-            end
-        end, true)
-    end)
-    if Ok then
-        self.RefreshTimer = Handle
-    end
-end
-
-function BP_VehicleRepairFacility:StopRefreshTimer()
-    local Handle = self.RefreshTimer
-    self.RefreshTimer = nil
-    if Handle == nil then
-        return
-    end
-    if UGCTimerUtility and UGCTimerUtility.RemoveLuaTimer then
-        pcall(function()
-            UGCTimerUtility.RemoveLuaTimer(Handle)
-        end)
-    end
 end
 
 function BP_VehicleRepairFacility:GetStatus()
@@ -405,6 +372,21 @@ function BP_VehicleRepairFacility:RefreshPromptUI()
     SetText(GetW(Widget, "Txt_Prompt"), Line)
 end
 
+--- 显示进入确认按钮；点击后打开建筑 UI
+function BP_VehicleRepairFacility:ShowEnterButton()
+    if IsLocalPlayerMineCarMode() then
+        return
+    end
+    if self.PromptWidget ~= nil or self.bPromptOpening then
+        return
+    end
+    if EnterButtonManager and EnterButtonManager.Show then
+        EnterButtonManager.Show('采矿车维修处', function()
+            self:ShowPrompt()
+        end)
+    end
+end
+
 function BP_VehicleRepairFacility:ShowPrompt()
     if IsLocalPlayerMineCarMode() then
         self:HidePrompt()
@@ -461,14 +443,12 @@ function BP_VehicleRepairFacility:ShowPrompt()
         end
         self:RefreshPromptUI()
         ugcprint("[VehicleRepair] 采矿车维修处面板已显示")
-        self:StartRefreshTimer()
     end)
 end
 
 function BP_VehicleRepairFacility:HidePrompt()
     self.bPromptOpening = false
     self:UnbindPCCallbacks()
-    self:StopRefreshTimer()
     local Widget = self.PromptWidget
     self.PromptWidget = nil
     if Widget == nil then
